@@ -1,3 +1,5 @@
 node_modules/
 .env
 seen.json
+applications.json
+classificationCache.json

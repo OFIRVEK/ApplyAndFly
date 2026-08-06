@@ -8,7 +8,7 @@ export async function listEmails(gmail) {
   const res = await gmail.users.messages.list({
     userId: 'me',
     labelIds: ['INBOX'],
-    maxResults: 60
+    maxResults: 200
   });
   return res.data.messages || [];
 }
@@ -52,5 +52,32 @@ export function decodeEmail(payload) {
     return Buffer.from(data, 'base64').toString('utf8');
   } catch {
     return payload.snippet || '';
+  }
+}
+
+function findHtmlPart(parts) {
+  for (const part of parts) {
+    if (part.mimeType === 'text/html' && part.body?.data) return part.body.data;
+    if (part.parts) {
+      const found = findHtmlPart(part.parts);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+// Separate from decodeEmail on purpose: classification wants clean plain
+// text, but link anchor text ("Visit our website", "Career page") only
+// exists in the HTML version — plain-text alternatives usually strip
+// formatting and leave bare/no URLs.
+export function decodeEmailHtml(payload) {
+  try {
+    const parts = payload.payload?.parts;
+    const isTopLevelHtml = payload.payload?.mimeType === 'text/html';
+    const data = parts ? findHtmlPart(parts) : (isTopLevelHtml ? payload.payload?.body?.data : null);
+    if (!data) return '';
+    return Buffer.from(data, 'base64').toString('utf8');
+  } catch {
+    return '';
   }
 }

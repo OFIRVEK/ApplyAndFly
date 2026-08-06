@@ -11,7 +11,7 @@ function repairJson(text) {
   return text.replace(/,(\s*[}\]])/g, "$1");
 }
 
-async function askGroqForJson(prompt, model = "llama-3.1-8b-instant") {
+export async function askGroqForJson(prompt, model = "llama-3.1-8b-instant") {
   const res = await axios.post(
     "https://api.groq.com/openai/v1/chat/completions",
     {
@@ -27,24 +27,40 @@ async function askGroqForJson(prompt, model = "llama-3.1-8b-instant") {
       },
     }
   );
-  const raw = stripCodeFences(res.data.choices[0].message.content);
+  const cleaned = stripCodeFences(res.data.choices[0].message.content);
   try {
-    return JSON.parse(raw);
+    return JSON.parse(cleaned);
   } catch {
-    return JSON.parse(repairJson(raw));
+    return JSON.parse(repairJson(cleaned));
   }
 }
 
-async function extractJobDetails({ subject, body, fromHeader, strongPhraseDetected, rejectionDetected }) {
+// Classifies a scanned email: is it a genuine application confirmation, a
+// rejection, an interview/assessment stage, or an offer? Used both to decide
+// whether to WhatsApp the user (only for a clean confirmation) and to update
+// the dashboard's tracked status for a company already in the table
+// (rejection/interview/offer all matter there, even though none of them get
+// WhatsApp'd).
+export async function classifyEmail({ subject, body, fromHeader, strongPhraseDetected, rejectionDetected, interviewStageDetected, offerDetected }) {
   const hintLines = [];
   if (strongPhraseDetected) {
     hintLines.push(
-      `Note: an automated pre-scan found an explicit confirmation phrase (e.g. "thank you for applying" / "we received your application") somewhere in this email. That phrase alone does NOT settle it — plenty of rejection emails open with the exact same wording before declining further down. Keep reading the full email before deciding.`
+      `Note: an automated pre-scan found an explicit confirmation phrase (e.g. "thank you for applying" / "we received your application") somewhere in this email. That phrase alone does NOT settle it — plenty of rejection, interview, assessment, and offer emails open with the exact same wording before moving on to their actual content. Keep reading the full email before deciding.`
     );
   }
   if (rejectionDetected) {
     hintLines.push(
-      `Note: an automated pre-scan found language elsewhere in this email that resembles a rejection/decline (e.g. "moving forward with other candidates", "unfortunately", "will not be proceeding"). This is a strong signal the email is a REJECTION, not a confirmation — set isApplicationConfirmation to false in that case, even if the email also opens with a "thank you for applying"-style line.`
+      `Note: an automated pre-scan found language elsewhere in this email that resembles a rejection/decline (e.g. "moving forward with other candidates", "unfortunately", "will not be proceeding"). This is a strong signal the email is a REJECTION — set isRejection to true in that case, even if the email also opens with a "thank you for applying"-style line.`
+    );
+  }
+  if (interviewStageDetected) {
+    hintLines.push(
+      `Note: an automated pre-scan found language suggesting an interview/assessment stage (e.g. scheduling an interview, a coding challenge). This is a strong signal it is NOT the initial confirmation — set isInterviewStage to true in that case.`
+    );
+  }
+  if (offerDetected) {
+    hintLines.push(
+      `Note: an automated pre-scan found language suggesting a job offer (e.g. "pleased to offer", "welcome to the team"). This is a strong signal it is an OFFER — set isOffer to true in that case.`
     );
   }
   const hintBlock = hintLines.length ? `\n${hintLines.join("\n")}\n` : "";
@@ -56,19 +72,23 @@ Email sender: ${fromHeader}
 Email body (may be partial):
 ${body.slice(0, 1500)}
 ${hintBlock}
-First decide: is this a direct confirmation that the recipient's OWN job application was received/submitted (e.g. "Thank you for applying", "We received your application", "Your application to X has been submitted")? Read the ENTIRE email before deciding — many rejection emails open with the same "thank you for applying" style line before declining later in the body. An opening thank-you does NOT make it a confirmation if the email goes on to reject, decline, or say the role was filled by someone else.
+First decide: is this a direct confirmation that the recipient's OWN job application was received/submitted (e.g. "Thank you for applying", "We received your application", "Your application to X has been submitted")? Read the ENTIRE email before deciding — many rejection/interview/offer emails open with the same "thank you for applying" style line before moving on to their actual content. An opening thank-you does NOT make it a plain confirmation if the email goes on to reject, invite to an interview/assessment, or extend an offer.
 
 For the "position" field: check the EMAIL SUBJECT LINE carefully, not just the body — job titles are very often stated there even when the body is generic (e.g. "Thank you for applying for the QA Engineer position at X", "We Got It: Thanks for applying for Flight Test & QA"). Only use "Not specified" if neither the subject nor the body names a role.
 
-Default to false. Only answer true if the email is unambiguously about a JOB APPLICATION at a company AND does not contain any rejection/decline language. Answer false for everything else, including but not limited to: banking/payment/transaction notifications (even ones with a reference/confirmation number), bills, invoices, receipts, shipping/delivery updates, subscription or account notices, government/insurance correspondence, job recommendation/suggestion digests ("jobs you may like", job alerts/newsletters), interview invitations, assessment/task requests, offer letters, rejection/decline notices (even ones that open with a thank-you line), or anything else not explicitly a clean application-received confirmation. This also includes ANY purchase/booking/reservation confirmation for something other than a job — concert or event tickets, restaurant reservations, flight/hotel bookings, online orders, deliveries, etc. — and ANY membership/loyalty-program/subscription/service sign-up confirmation (e.g. "Welcome to X Membership"), even if it uses the word "application" or "welcome" (a membership application, loan application, or software application is NOT a job application). Such emails can easily contain words that superficially look job-related (e.g. a seat "position", a "job well done" in marketing copy) — that is NOT a job application. Words like "confirmation," "welcome," "application," "position," or the presence of a reference number are NOT enough on their own — the email must be unmistakably about applying for EMPLOYMENT at a hiring company and free of any rejection language.
+Default to false for isApplicationConfirmation. Only answer true if the email confirms the recipient's OWN application was received — not a rejection, not an interview/assessment invite, not an offer, and NOT a job the recipient hasn't applied to yet. Also answer false for: job recommendation/suggestion digests pitching a role the recipient has NOT applied to — these come from job boards, LinkedIn, or recruiting agencies and are phrased as an invitation to apply or a "we found this for you" pitch, in any language (English examples: "jobs you may like", "job alert", "new jobs for you"; a Hebrew example: "חשבנו עליך כשראינו את המשרה הזו" = "we thought of you when we saw this role" — this is a pitch to APPLY, not a confirmation that an application was already submitted). Also answer false for: banking/payment/transaction notifications (even ones with a reference/confirmation number), bills, invoices, receipts, shipping/delivery updates, subscription or account notices, government/insurance correspondence, or anything else not explicitly a clean application-received confirmation. This also includes ANY purchase/booking/reservation confirmation for something other than a job — concert or event tickets, restaurant reservations, flight/hotel bookings, online orders, deliveries, etc. — and ANY membership/loyalty-program/subscription/service sign-up confirmation (e.g. "Welcome to X Membership"), even if it uses the word "application" or "welcome" (a membership application, loan application, or software application is NOT a job application). Such emails can easily contain words that superficially look job-related (e.g. a seat "position", a "job well done" in marketing copy) — that is NOT a job application. Words like "confirmation," "welcome," "application," "position," or the presence of a reference number are NOT enough on their own — the email must be unmistakably confirming that the recipient ALREADY applied, not inviting them to.
 
 Respond with ONLY valid JSON (no markdown fences, no commentary) in this exact shape:
 {
   "isApplicationConfirmation": true or false,
   "isRejection": true or false,
-  "company": "the actual hiring company's name (best guess even if isApplicationConfirmation is false)",
+  "isInterviewStage": true or false — true for an interview invitation, assessment/task request, or coding challenge (reached the interview stage, not yet an offer),
+  "isOffer": true or false — true for an offer letter / offer of employment (the candidate got the job),
+  "company": "the actual hiring company's name (best guess regardless of the other fields)",
   "position": "job title mentioned in the email, or 'Not specified' if unclear",
-  "status": "short status phrase, e.g. 'Application received'"
+  "status": "short status phrase, e.g. 'Application received', 'Interview scheduled', 'Not selected', 'Offer extended'",
+  "recruiterName": "name of a specific recruiter/contact person mentioned in the email, or null if none is named",
+  "location": "job/office location mentioned in the email (city/country), or null if none is stated"
 }`;
 
   return askGroqForJson(prompt);
@@ -88,7 +108,7 @@ const POSITION_SUBJECT_PATTERNS = [
   /thanks for applying for (.+?)(?:\s+at\b|$)/i,
 ];
 
-function extractPositionFromSubject(subject = "") {
+export function extractPositionFromSubject(subject = "") {
   for (const pattern of POSITION_SUBJECT_PATTERNS) {
     const match = subject.match(pattern);
     if (match?.[1]) return match[1].trim().replace(/[.,;:]+$/, "");
@@ -96,7 +116,7 @@ function extractPositionFromSubject(subject = "") {
   return null;
 }
 
-function formatReceivedDate(dateHeader) {
+export function formatReceivedDate(dateHeader) {
   const parsed = dateHeader ? new Date(dateHeader) : null;
   if (!parsed || isNaN(parsed.getTime())) return "Date unavailable";
   return parsed.toLocaleString("en-US", {
@@ -109,10 +129,14 @@ function formatReceivedDate(dateHeader) {
   });
 }
 
-async function enrichCompany({ company, position }) {
-  const prompt = `You are building a short company snapshot for a job seeker who applied to "${position}" at "${company}".
+async function enrichCompanyOnce({ company, position, websiteBlurb }) {
+  const websiteBlock = websiteBlurb
+    ? `\nRaw text pulled from the company's official website (may include navigation/menu clutter mixed with real content — use judgment to find the genuine descriptive parts): ${websiteBlurb}\n\nPrefer this live content when it's genuinely descriptive — it's more current and reliable than memory, especially for smaller or less widely known companies.\n`
+    : "";
 
-Using your own general knowledge of "${company}", respond with ONLY valid JSON (no markdown fences, no commentary) in this exact shape:
+  const prompt = `You are building a short company snapshot for a job seeker who applied to "${position}" at "${company}".
+${websiteBlock}
+Using your own general knowledge of "${company}"${websiteBlurb ? " combined with the website text above" : ""}, respond with ONLY valid JSON (no markdown fences, no commentary) in this exact shape:
 {
   "employees": "approximate employee count if reasonably well known, else 'Not publicly disclosed'",
   "industry": "industry/category",
@@ -130,44 +154,265 @@ Do not fabricate precise numbers you are not reasonably confident about — use 
   return askGroqForJson(prompt, "llama-3.3-70b-versatile");
 }
 
-// Returns: a message string on success, null on a real enrichment failure
-// (caller falls back to a plain message), or undefined when the email is
-// deliberately skipped (not an application confirmation — caller sends nothing).
-export async function buildJobUpdateMessage({ subject, body, fromHeader, dateHeader, strongPhraseDetected, rejectionDetected }) {
-  let details;
-  try {
-    details = await extractJobDetails({ subject, body, fromHeader, strongPhraseDetected, rejectionDetected });
-  } catch (err) {
-    console.error("Enrichment error:", err.response?.data || err.message || err);
-    return null;
+const VAGUE_MARKERS = [
+  "specific business area unclear",
+  "business area is unclear",
+  "not well-known",
+  "not widely known",
+  "unclear",
+];
+
+function isVagueDescription(text = "") {
+  const lower = text.toLowerCase();
+  return VAGUE_MARKERS.some((m) => lower.includes(m));
+}
+
+function decodeHtmlEntities(text) {
+  return text
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ");
+}
+
+const JUNK_BLURB_PATTERNS = [
+  /enable javascript/i,
+  /cookie/i,
+  /just a moment/i,
+  /access denied/i,
+  /are you a robot/i,
+  /captcha/i,
+];
+
+export function isJunkText(text) {
+  return JUNK_BLURB_PATTERNS.some((p) => p.test(text));
+}
+
+function stripHtmlToText(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function fetchPageText(url) {
+  const { data: html } = await axios.get(url, {
+    timeout: 3500,
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; ApplyAndFlyBot/1.0)" },
+  });
+
+  const descMatch = html.match(
+    /<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i
+  );
+  let metaDescription = descMatch ? decodeHtmlEntities(descMatch[1]).trim() : "";
+  if (isJunkText(metaDescription)) metaDescription = "";
+
+  const bodyMatch = html.match(/<body[\s\S]*?<\/body>/i);
+  let bodyExcerpt = bodyMatch
+    ? decodeHtmlEntities(stripHtmlToText(bodyMatch[0])).slice(0, 500).trim()
+    : "";
+  if (isJunkText(bodyExcerpt)) bodyExcerpt = "";
+
+  return [metaDescription, bodyExcerpt].filter(Boolean).join(" — ").trim();
+}
+
+// .co.il added given how many tracked companies turn out to be Israeli.
+const CANDIDATE_TLDS = [".com", ".co.il", ".io", ".ai"];
+const ABOUT_PATHS = ["/about", "/about-us"];
+
+// Third-party ATS/job-board domains — if the sender's email comes from one
+// of these, it tells us nothing about the hiring company's own site (it'd
+// just summarize the ATS platform itself), so never try it directly.
+// Substring match on purpose: ATS platforms often send from branded
+// notification subdomains (e.g. "xsightlabs.comeet-notifications.com"),
+// which an exact-suffix match on "comeet.co" would miss entirely.
+export const ATS_DOMAIN_KEYWORDS = [
+  "greenhouse", "lever.co", "myworkday", "smartrecruiters",
+  "linkedin", "indeed.com", "comeet", "jobvite", "icims", "workable",
+  "breezy.hr", "recruitee", "taleo", "successfactors", "bamboohr",
+  "ashbyhq", "teamtailor", "personio", "applytojob", "hiremetch",
+];
+const GENERIC_MAIL_DOMAINS = ["gmail.com", "googlemail.com", "outlook.com", "yahoo.com", "hotmail.com"];
+
+export function isAtsOrGenericDomain(domain) {
+  if (GENERIC_MAIL_DOMAINS.includes(domain)) return true;
+  return ATS_DOMAIN_KEYWORDS.some((k) => domain.includes(k));
+}
+
+export function extractSenderDomain(fromHeader = "") {
+  const match = fromHeader.match(/[\w.+-]+@([\w.-]+)/);
+  if (!match) return null;
+  const domain = match[1].toLowerCase();
+  if (isAtsOrGenericDomain(domain)) return null;
+  return domain;
+}
+
+// Trackers/CDNs/social platforms that regularly show up in email HTML
+// (logo images, share icons, analytics pixels) but are never the hiring
+// company's own site.
+const NOISE_DOMAIN_KEYWORDS = [
+  "cloudfront", "sendgrid", "mailgun", "google-analytics", "doubleclick",
+  "facebook.com", "twitter.com", "x.com", "instagram.com", "youtube.com",
+  "googletagmanager", "mailchimp", "hubspot", "sentry.io", "gstatic.com",
+  "googleapis.com", "schema.org", "w3.org", "cdn.",
+];
+
+function isNoiseDomain(domain) {
+  return isAtsOrGenericDomain(domain) || NOISE_DOMAIN_KEYWORDS.some((k) => domain.includes(k));
+}
+
+// ATS emails often include a "view your application" / "see job posting"
+// link — sometimes that points to the company's own branded career page
+// even when the SENDER address is the ATS's generic notification domain.
+// This is just reading links out of an email already legitimately received,
+// not scraping anything.
+function extractCandidateDomainsFromBody(body = "", companySlug = "") {
+  const urls = body.match(/https?:\/\/[^\s"'<>)]+/g) || [];
+  const domains = new Set();
+
+  for (const url of urls) {
+    try {
+      const domain = new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+      if (!isNoiseDomain(domain)) domains.add(domain);
+    } catch {
+      // malformed URL, skip
+    }
   }
 
-  // The LLM's own rejection call is authoritative — never send a "confirmed"
-  // message for something it flagged as a rejection, no matter what else
-  // matched. A strong confirmation-phrase match only overrides the LLM's
-  // isApplicationConfirmation=false when there's no rejection signal at all
-  // (from either our own deterministic scan or the LLM itself) — this is
-  // what lets a genuine confirmation the LLM under-called still go through,
-  // without letting a rejection that opens with "thank you for applying"
-  // slip through as a false positive.
-  if (details.isRejection) {
-    return undefined;
+  // Prefer domains that actually mention the company name.
+  return [...domains].sort((a, b) => {
+    const aMatch = companySlug && a.replace(/\./g, "").includes(companySlug) ? 0 : 1;
+    const bMatch = companySlug && b.replace(/\./g, "").includes(companySlug) ? 0 : 1;
+    return aMatch - bMatch;
+  });
+}
+
+// Anchor text that signals "this link goes to our actual company site" —
+// the strongest signal available, since it's the sender explicitly telling
+// the reader what the link is. Only exists in the HTML version of an email.
+const WEBSITE_LINK_TEXT_PATTERNS = [
+  /visit our website/i, /our website/i, /company website/i,
+  /career(s)? page/i, /about us/i, /learn more about us/i,
+  /learn about us/i, /click here to learn/i, /visit us at/i,
+  // Hebrew
+  /האתר שלנו/, /עמוד קריירה/, /אודותינו/, /בקרו באתר/,
+];
+
+function extractDomainsFromHtmlLinks(html = "") {
+  const domains = [];
+  const anchorRegex = /<a\s+[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let match;
+  while ((match = anchorRegex.exec(html)) !== null) {
+    const href = match[1];
+    const linkText = match[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    if (!WEBSITE_LINK_TEXT_PATTERNS.some((p) => p.test(linkText))) continue;
+    try {
+      const domain = new URL(href).hostname.toLowerCase().replace(/^www\./, "");
+      if (!isNoiseDomain(domain)) domains.push(domain);
+    } catch {
+      // relative/malformed URL, skip
+    }
   }
-  if (!details.isApplicationConfirmation && !(strongPhraseDetected && !rejectionDetected)) {
-    return undefined;
+  return domains;
+}
+
+async function tryDomain(domain) {
+  let blurb = await fetchPageText(`https://${domain}`);
+
+  // An About page usually has more substance than a homepage banner.
+  for (const path of ABOUT_PATHS) {
+    const aboutText = await fetchPageText(`https://${domain}${path}`).catch(() => "");
+    if (aboutText) {
+      blurb = [blurb, aboutText].filter(Boolean).join(" — ");
+      break;
+    }
   }
 
-  if (!details.position || /not specified/i.test(details.position)) {
-    details.position = extractPositionFromSubject(subject) || details.position;
+  return blurb.length >= 15 ? blurb.slice(0, 900) : "";
+}
+
+async function findWebsiteBlurb(company, fromHeader, body, html) {
+  const tried = new Set();
+
+  async function attempt(domain) {
+    if (!domain || tried.has(domain)) return "";
+    tried.add(domain);
+    try {
+      return await tryDomain(domain);
+    } catch {
+      return "";
+    }
   }
 
-  try {
-    const snapshot = await enrichCompany({
-      company: details.company,
-      position: details.position,
-    });
+  // 1. Explicit "Visit our website" / "Career page" style links — the
+  // strongest signal, since the sender is directly telling us what the
+  // link is. Only available from the HTML version of the email.
+  if (html) {
+    for (const domain of extractDomainsFromHtmlLinks(html)) {
+      const blurb = await attempt(domain);
+      if (blurb) return blurb;
+    }
+  }
 
-    return `🚀 ApplyAndFly
+  // 2. The sender's own domain, when it's not a third-party ATS/job-board —
+  // often correct for smaller companies that email directly.
+  const senderDomain = extractSenderDomain(fromHeader);
+  {
+    const blurb = await attempt(senderDomain);
+    if (blurb) return blurb;
+  }
+
+  const slug = company.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  // 3. Any other non-noise link embedded in the body — a "view job" or
+  // "track application" link sometimes points to the company's own branded
+  // career page even when the sender address is the ATS's generic domain.
+  if (body) {
+    const candidates = extractCandidateDomainsFromBody(body, slug).slice(0, 5);
+    for (const domain of candidates) {
+      const blurb = await attempt(domain);
+      if (blurb) return blurb;
+    }
+  }
+
+  if (!slug) return "";
+
+  // 4. Last resort: guess from the company name + common TLDs.
+  for (const tld of CANDIDATE_TLDS) {
+    const blurb = await attempt(`${slug}${tld}`);
+    if (blurb) return blurb;
+  }
+  return "";
+}
+
+// Only reaches for a live website when the LLM's own knowledge came back
+// vague — most companies it already knows well, so this stays cheap (no
+// extra network/LLM calls) while directly targeting the gap: smaller/niche
+// companies it has no reliable training-data knowledge of.
+export async function enrichCompany({ company, position, fromHeader, body, html }) {
+  const first = await enrichCompanyOnce({ company, position });
+  if (!isVagueDescription(first.whatTheyDo)) return first;
+
+  console.log(`[enrich] "${company}" was vague, trying a website lookup`);
+  const blurb = await findWebsiteBlurb(company, fromHeader, body, html).catch(() => "");
+  if (!blurb) return first;
+
+  console.log(`[enrich] found website content for "${company}" (${blurb.length} chars), retrying`);
+  return enrichCompanyOnce({ company, position, websiteBlurb: blurb });
+}
+
+export function formatConfirmationMessage(details, snapshot, dateHeader) {
+  const dashboardLink = config.app.publicUrl
+    ? `\n\n📊 View and manage your applications:\n${config.app.publicUrl}/dashboard`
+    : "";
+
+  return `🚀 ApplyAndFly
 
 We detected a new application update.
 
@@ -191,10 +436,7 @@ Application received ${formatReceivedDate(dateHeader)}.
 
 ⭐ What they do
 ${snapshot.whatTheyDo}
+${dashboardLink}
 
 Good luck! 🍀`;
-  } catch (err) {
-    console.error("Enrichment error:", err.response?.data || err.message || err);
-    return null;
-  }
 }

@@ -8,18 +8,53 @@ const CONFIRMATION_PHRASES = [
 export function isJobEmail(text = '') {
   const keywords = [
     'application','applied','applying','interview','recruiter',
-    'position','job','hiring','assessment'
-  ];
-  const suggestionPhrases = [
-    'jobs you may be interested', 'recommended jobs', 'recommended for you',
-    'new jobs for you', 'job alert', 'jobs matching', 'similar jobs',
-    'jobs based on your', 'weekly job digest', 'jobs you might like',
-    'people are also viewing', 'top job picks'
+    'position','job','hiring','assessment','interest'
   ];
   const lower = text.toLowerCase();
   if (CONFIRMATION_PHRASES.some(p => lower.includes(p))) return true;
-  if (suggestionPhrases.some(p => lower.includes(p))) return false;
+  if (looksLikeJobSuggestion(text)) return false;
   return keywords.some(k => lower.includes(k));
+}
+
+// Job recommendation/suggestion digests (LinkedIn, job boards, recruiting
+// agencies pitching a role the recipient has NOT applied to) can still
+// contain enough incidental English (a role name, "QA", etc.) to slip past
+// the English keyword pre-filter even when the email is mostly in another
+// language — and the non-English path's own suggestion check only runs for
+// emails that path actually flagged. Checking this universally, regardless
+// of which path matched, closes that gap. Deliberately excludes anything
+// too generic (e.g. a plain "for more details" link) that could appear in
+// genuine confirmations too.
+const JOB_SUGGESTION_PHRASES = [
+  // English
+  'jobs you may be interested', 'recommended jobs', 'recommended for you',
+  'new jobs for you', 'job alert', 'jobs matching', 'similar jobs',
+  'jobs based on your', 'weekly job digest', 'jobs you might like',
+  'people are also viewing', 'top job picks', 'apply now to',
+  // Hebrew — job board / recruiter "here's a role you haven't applied to" pitches
+  'חשבנו עליך', 'התאמה למשרה', 'משרות מומלצות', 'משרות דומות',
+  'מצאנו עבורך משרה', 'משרה שעשויה לעניין אותך', 'משרות חדשות עבורך',
+  'להתאים לך', 'המתאימות לך', 'המתאימה לך',
+];
+
+// Structural signal, not just phrase-matching: a genuine application
+// confirmation is always about exactly ONE job. An email announcing a count
+// of multiple postings ("2 new jobs...", "עלו 2 משרות...") is a digest, no
+// matter how it's phrased — this catches new wording variants without
+// needing another reactive phrase added every time.
+const JOB_COUNT_DIGEST_REGEX = /\b[2-9]\d*\s*(jobs|job openings|new jobs)\b|\d+\s*משרות/i;
+
+// "Your job's expiring" / "job is expiring soon" — LinkedIn and job boards
+// send these as a reminder that a SAVED posting is about to close, not a
+// confirmation that the recipient applied to it. Written as a regex (not a
+// literal phrase) since the apostrophe in "job's" varies (straight vs
+// curly) between senders.
+const JOB_EXPIRING_REGEX = /\bjob.{0,3}\s*expir(ing|es|ation)\b/i;
+
+export function looksLikeJobSuggestion(text = '') {
+  const lower = text.toLowerCase();
+  if (JOB_COUNT_DIGEST_REGEX.test(text) || JOB_EXPIRING_REGEX.test(text)) return true;
+  return JOB_SUGGESTION_PHRASES.some((p) => lower.includes(p) || text.includes(p));
 }
 
 export function hasStrongConfirmationPhrase(text = '') {
@@ -49,6 +84,38 @@ const REJECTION_PHRASES = [
 export function looksLikeRejection(text = '') {
   const lower = text.toLowerCase();
   return REJECTION_PHRASES.some(p => lower.includes(p));
+}
+
+// Same problem as rejections: interview invites, assessment/task requests
+// can carry the same "thank you for applying"-style boilerplate ATS systems
+// reuse across every stage, not just the initial confirmation. Catches that
+// so a strong confirmation-phrase match doesn't blindly promote a
+// later-stage email into a "confirmation received" send.
+const INTERVIEW_STAGE_PHRASES = [
+  'schedule your interview', 'schedule an interview', 'interview invitation',
+  'technical interview', 'phone interview', 'video interview', 'your video interview',
+  'phone screen', 'book a time', 'select a time',
+  'next step in our process', 'next steps in the process',
+  'coding challenge', 'take-home assignment', 'take home assignment',
+  'complete the assessment',
+];
+
+export function looksLikeInterviewStage(text = '') {
+  const lower = text.toLowerCase();
+  return INTERVIEW_STAGE_PHRASES.some(p => lower.includes(p));
+}
+
+// Offer letters are their own category (maps to "Hired" on the dashboard),
+// distinct from interview/assessment stages (maps to "In Progress").
+const OFFER_PHRASES = [
+  'offer letter', 'pleased to offer', 'we are excited to offer',
+  "we're excited to offer", 'offer of employment', 'employment offer',
+  'welcome to the team', 'your start date',
+];
+
+export function looksLikeOffer(text = '') {
+  const lower = text.toLowerCase();
+  return OFFER_PHRASES.some(p => lower.includes(p));
 }
 
 // Covers Hebrew, Arabic, Cyrillic, Greek, Devanagari, Thai, CJK, Hangul.
@@ -120,6 +187,34 @@ const PAYMENT_KEYWORDS = [
   // Hebrew
   'סכום לתשלום', 'סה"כ לתשלום', 'אמצעי תשלום', 'סכום כולל', 'אישור תשלום',
 ];
+
+// Automated Google account/security notifications (OAuth consent grants,
+// new sign-in alerts, password-changed emails, etc.) always come from
+// google.com itself and are NEVER job-application confirmations — but their
+// boilerplate legitimately contains words like "application" (as in
+// "third-party application"), which is enough to fool both the keyword
+// pre-filter and, sometimes, the classification LLM. Checking the sender's
+// actual domain is a hard, reliable signal that phrase-matching can't be.
+export function looksLikeAccountNotice(fromHeader = '') {
+  const match = fromHeader.match(/[\w.+-]+@([\w.-]+)/);
+  if (!match) return false;
+  const domain = match[1].toLowerCase();
+  return domain === 'google.com' || domain.endsWith('.google.com');
+}
+
+// Messages from Israel's Employment Service can contain job-related words,
+// but a visit/appointment at a government employment office is not an
+// application submitted to an employer. Treat these notices as non-job mail
+// before the LLM classifier has a chance to mistake them for an application.
+const ISRAELI_EMPLOYMENT_SERVICE_MARKERS = [
+  'sherut hataasuka', 'israeli employment service',
+  'שירות התעסוקה', 'לשכת התעסוקה',
+];
+
+export function looksLikeIsraeliEmploymentServiceNotice(text = '', fromHeader = '') {
+  const combined = `${text}\n${fromHeader}`.toLowerCase();
+  return ISRAELI_EMPLOYMENT_SERVICE_MARKERS.some((marker) => combined.includes(marker));
+}
 
 export function looksLikePayment(text = '') {
   const lower = text.toLowerCase();

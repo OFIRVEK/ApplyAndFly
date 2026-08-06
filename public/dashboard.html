@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ApplyAndFly Dashboard</title>
+<style>
+  :root {
+    --bg: #f6f7fb;
+    --card: #ffffff;
+    --text: #1a1d29;
+    --text-secondary: #6b7280;
+    --border: #e5e7eb;
+    --accent: #4f46e5;
+    --rejected: #ef4444;
+    --progress: #f59e0b;
+    --hired: #10b981;
+    --applied: #94a3b8;
+    --track: #eef0f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1117;
+      --card: #171a23;
+      --text: #e8e9ee;
+      --text-secondary: #9aa0ac;
+      --border: #2a2e3a;
+      --track: #262a36;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 32px 24px 64px;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; }
+  header { margin-bottom: 32px; display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+  header > div:last-child { display: flex; flex-direction: column; align-items: flex-end; }
+  h1 { font-size: 26px; font-weight: 600; margin: 0 0 4px; }
+  .subtitle { color: var(--text-secondary); font-size: 14px; }
+  .refresh-button {
+    border: 0;
+    background: var(--accent);
+    color: white;
+    border-radius: 8px;
+    padding: 9px 12px;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .refresh-button:disabled { opacity: 0.6; cursor: wait; }
+  .refresh-status { color: var(--text-secondary); font-size: 12px; text-align: right; margin-top: 6px; max-width: 260px; }
+
+  .pies {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+  .pie-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .pie {
+    width: 76px;
+    height: 76px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+  .pie::before {
+    content: "";
+    position: absolute;
+    inset: 8px;
+    border-radius: 50%;
+    background: var(--card);
+  }
+  .pie-label { position: relative; font-size: 15px; font-weight: 600; }
+  .pie-meta .title { font-size: 13px; color: var(--text-secondary); margin-bottom: 2px; }
+  .pie-meta .count { font-size: 13px; color: var(--text-secondary); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  th, td {
+    text-align: left;
+    padding: 12px 16px;
+    font-size: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+    font-weight: 500;
+  }
+  .filter-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .filter-button {
+    appearance: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    line-height: 0;
+    padding: 3px;
+  }
+  .filter-button:hover, .filter-button:focus-visible, .filter-button.is-active {
+    color: var(--text);
+    border-color: var(--border);
+  }
+  .filter-menu {
+    position: fixed;
+    z-index: 10;
+    width: 250px;
+    max-height: 390px;
+    display: none;
+    background: var(--card);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.16);
+    padding: 10px;
+    text-transform: none;
+    letter-spacing: normal;
+    font-size: 13px;
+  }
+  .filter-menu.open { display: block; }
+  .filter-sorts { display: flex; gap: 6px; margin-bottom: 8px; }
+  .filter-sort {
+    flex: 1;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    padding: 6px 8px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .filter-sort:hover, .filter-sort:focus-visible { color: var(--text); border-color: var(--text-secondary); }
+  .filter-search {
+    width: 100%;
+    padding: 7px 9px;
+    margin-bottom: 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+  }
+  .filter-options { max-height: 225px; overflow-y: auto; margin: 4px -4px 10px; }
+  .filter-option { display: flex; align-items: center; gap: 8px; padding: 6px 4px; cursor: pointer; }
+  .filter-option input { margin: 0; }
+  .filter-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .filter-divider { border: 0; border-top: 1px solid var(--border); margin: 8px 0; }
+  .filter-actions { display: flex; justify-content: space-between; gap: 8px; }
+  .filter-action {
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    padding: 6px 8px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .filter-action.apply { background: var(--accent); color: white; }
+  .filter-action:hover { color: var(--text); }
+  .filter-action.apply:hover { color: white; opacity: 0.9; }
+  }
+  tr:last-child td { border-bottom: none; }
+  .company { font-weight: 600; }
+  .explanation { color: var(--text-secondary); max-width: 340px; }
+
+  .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .badge-applied { background: color-mix(in srgb, var(--applied) 18%, transparent); color: var(--applied); }
+  .badge-progress { background: color-mix(in srgb, var(--progress) 18%, transparent); color: var(--progress); }
+  .badge-rejected { background: color-mix(in srgb, var(--rejected) 18%, transparent); color: var(--rejected); }
+  .badge-hired { background: color-mix(in srgb, var(--hired) 18%, transparent); color: var(--hired); }
+  .status-select {
+    appearance: none;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--card);
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    padding: 4px 28px 4px 10px;
+  }
+  .status-select.status-applied { background: color-mix(in srgb, var(--applied) 18%, var(--card)); color: var(--applied); border-color: color-mix(in srgb, var(--applied) 45%, var(--border)); }
+  .status-select.status-progress { background: color-mix(in srgb, var(--progress) 18%, var(--card)); color: var(--progress); border-color: color-mix(in srgb, var(--progress) 45%, var(--border)); }
+  .status-select.status-rejected { background: color-mix(in srgb, var(--rejected) 18%, var(--card)); color: var(--rejected); border-color: color-mix(in srgb, var(--rejected) 45%, var(--border)); }
+  .status-select.status-hired { background: color-mix(in srgb, var(--hired) 18%, var(--card)); color: var(--hired); border-color: color-mix(in srgb, var(--hired) 45%, var(--border)); }
+
+  .empty {
+    text-align: center;
+    padding: 48px 16px;
+    color: var(--text-secondary);
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>ApplyAndFly Dashboard</h1>
+        <div class="subtitle">Live tracking of every application ApplyAndFly has detected</div>
+      </div>
+      <div>
+        <button class="refresh-button" id="refresh-button">Refresh company info</button>
+        <div class="refresh-status" id="refresh-status"></div>
+      </div>
+    </header>
+
+    <div class="pies">
+      <div class="pie-card">
+        <div class="pie" id="pie-rejected"><span class="pie-label" id="pie-rejected-label">0%</span></div>
+        <div class="pie-meta">
+          <div class="title">Rejected</div>
+          <div class="count" id="pie-rejected-count">0 of 0</div>
+        </div>
+      </div>
+      <div class="pie-card">
+        <div class="pie" id="pie-progress"><span class="pie-label" id="pie-progress-label">0%</span></div>
+        <div class="pie-meta">
+          <div class="title">In Progress</div>
+          <div class="count" id="pie-progress-count">0 of 0</div>
+        </div>
+      </div>
+      <div class="pie-card">
+        <div class="pie" id="pie-hired"><span class="pie-label" id="pie-hired-label">0%</span></div>
+        <div class="pie-meta">
+          <div class="title">Hired</div>
+          <div class="count" id="pie-hired-count">0 of 0</div>
+        </div>
+      </div>
+    </div>
+
+    <table id="table" style="display:none">
+      <thead>
+        <tr>
+          <th><div class="filter-header"><span>Company</span><button class="filter-button" data-filter="company" aria-label="Filter company"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M1.5 3h13L9.5 8.7v3.8l-3 1.5V8.7L1.5 3z"/></svg></button></div></th>
+          <th><div class="filter-header"><span>Position</span><button class="filter-button" data-filter="position" aria-label="Filter position"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M1.5 3h13L9.5 8.7v3.8l-3 1.5V8.7L1.5 3z"/></svg></button></div></th>
+          <th><div class="filter-header"><span>Applied</span><button class="filter-button" data-filter="appliedDate" aria-label="Filter applied date"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M1.5 3h13L9.5 8.7v3.8l-3 1.5V8.7L1.5 3z"/></svg></button></div></th>
+          <th><div class="filter-header"><span>Status</span><button class="filter-button" data-filter="status" aria-label="Filter status"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M1.5 3h13L9.5 8.7v3.8l-3 1.5V8.7L1.5 3z"/></svg></button></div></th>
+          <th><div class="filter-header"><span>What they do</span><button class="filter-button" data-filter="briefExplanation" aria-label="Filter company description"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M1.5 3h13L9.5 8.7v3.8l-3 1.5V8.7L1.5 3z"/></svg></button></div></th>
+        </tr>
+      </thead>
+      <tbody id="table-body"></tbody>
+    </table>
+    <div class="filter-menu" id="filter-menu" role="dialog" aria-label="Filter applications"></div>
+    <div class="empty" id="empty-state">No applications tracked yet — they'll show up here as ApplyAndFly detects them.</div>
+  </div>
+
+<script>
+  const STATUS_BADGE = {
+    "Applied": "badge-applied",
+    "In Progress": "badge-progress",
+    "Rejected": "badge-rejected",
+    "Hired": "badge-hired",
+  };
+  const STATUSES = ["Applied", "In Progress", "Rejected", "Hired"];
+  let allApplications = [];
+  const activeFilters = new Map();
+  let openFilterColumn = null;
+  let pendingFilterValues = new Set();
+  let sortColumn = "appliedDate";
+  let sortDirection = "desc";
+
+  function filterValue(application, column) {
+    const value = application[column];
+    return value === undefined || value === null || value === "" ? "Not specified" : String(value);
+  }
+
+  function valuesForColumn(column) {
+    return [...new Set(allApplications.map(application => filterValue(application, column)))].sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" })
+    );
+  }
+
+  function filteredApplications() {
+    return allApplications.filter(application => [...activeFilters].every(([column, selected]) =>
+      selected.has(filterValue(application, column))
+    ));
+  }
+
+  function compareApplications(a, b) {
+    let left = filterValue(a, sortColumn);
+    let right = filterValue(b, sortColumn);
+    if (sortColumn === "appliedDate") {
+      left = new Date(left).getTime() || 0;
+      right = new Date(right).getTime() || 0;
+    }
+    const comparison = typeof left === "number"
+      ? left - right
+      : left.localeCompare(right, undefined, { sensitivity: "base" });
+    return sortDirection === "asc" ? comparison : -comparison;
+  }
+
+  function updateFilterButtons() {
+    document.querySelectorAll(".filter-button").forEach(button => {
+      button.classList.toggle("is-active", activeFilters.has(button.dataset.filter));
+    });
+  }
+
+  function closeFilterMenu() {
+    document.getElementById("filter-menu").classList.remove("open");
+    openFilterColumn = null;
+  }
+
+  function renderFilterMenu(column, button) {
+    const menu = document.getElementById("filter-menu");
+    const values = valuesForColumn(column);
+    pendingFilterValues = new Set(activeFilters.get(column) || values);
+    openFilterColumn = column;
+    const rect = button.getBoundingClientRect();
+    menu.style.top = `${rect.bottom + 6}px`;
+    menu.style.left = `${Math.min(rect.left, window.innerWidth - 260)}px`;
+    menu.innerHTML = `
+      <div class="filter-sorts"><button type="button" class="filter-sort" data-direction="asc">A → Z</button><button type="button" class="filter-sort" data-direction="desc">Z → A</button></div>
+      <input class="filter-search" type="search" placeholder="Search values" aria-label="Search filter values">
+      <label class="filter-option"><input type="checkbox" class="filter-all" ${pendingFilterValues.size === values.length ? "checked" : ""}><span>Select all</span></label>
+      <hr class="filter-divider">
+      <div class="filter-options">${values.map(value => `
+        <label class="filter-option" data-filter-value="${escapeAttribute(value).toLowerCase()}">
+          <input type="checkbox" class="filter-value" value="${encodeURIComponent(value)}" ${pendingFilterValues.has(value) ? "checked" : ""}>
+          <span title="${escapeAttribute(value)}">${escapeHtml(value)}</span>
+        </label>`).join("")}</div>
+      <div class="filter-actions"><button type="button" class="filter-action clear">Clear</button><button type="button" class="filter-action apply">Apply</button></div>`;
+    menu.classList.add("open");
+    menu.querySelector(".filter-search").focus();
+  }
+
+  function setPie(prefix, count, total, color) {
+    const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+    const el = document.getElementById(`pie-${prefix}`);
+    el.style.background = `conic-gradient(${color} ${pct}%, var(--track) ${pct}% 100%)`;
+    document.getElementById(`pie-${prefix}-label`).textContent = `${pct}%`;
+    document.getElementById(`pie-${prefix}-count`).textContent = `${count} of ${total}`;
+  }
+
+  function formatDate(iso) {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  }
+
+  async function loadDashboard() {
+    const res = await fetch("/api/applications");
+    allApplications = await res.json();
+    const apps = filteredApplications();
+
+    const total = allApplications.length;
+    const rejected = allApplications.filter(a => a.status === "Rejected").length;
+    const progress = allApplications.filter(a => a.status === "In Progress").length;
+    const hired = allApplications.filter(a => a.status === "Hired").length;
+
+    setPie("rejected", rejected, total, "var(--rejected)");
+    setPie("progress", progress, total, "var(--progress)");
+    setPie("hired", hired, total, "var(--hired)");
+
+    const table = document.getElementById("table");
+    const emptyState = document.getElementById("empty-state");
+    const tbody = document.getElementById("table-body");
+
+    if (total === 0) {
+      table.style.display = "none";
+      emptyState.textContent = "No applications tracked yet — they'll show up here as ApplyAndFly detects them.";
+      emptyState.style.display = "block";
+      return;
+    }
+
+    if (apps.length === 0) {
+      table.style.display = "none";
+      emptyState.textContent = "No applications match the selected filters.";
+      emptyState.style.display = "block";
+      updateFilterButtons();
+      return;
+    }
+
+    table.style.display = "table";
+    emptyState.style.display = "none";
+
+    tbody.innerHTML = [...apps].sort(compareApplications).map(a => `
+      <tr>
+        <td class="company">${escapeHtml(a.company)}</td>
+        <td>${escapeHtml(a.position || "Not specified")}</td>
+        <td>${formatDate(a.appliedDate)}</td>
+        <td>${renderStatusSelect(a)}</td>
+        <td class="explanation">${escapeHtml(a.briefExplanation || "")}</td>
+      </tr>
+    `).join("");
+    updateFilterButtons();
+  }
+
+  function escapeHtml(str = "") {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  function escapeAttribute(str = "") {
+    return escapeHtml(str).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  function renderStatusSelect(application) {
+    const options = STATUSES.map(status =>
+      `<option value="${status}"${status === application.status ? " selected" : ""}>${status}</option>`
+    ).join("");
+    const statusClass = (STATUS_BADGE[application.status] || "badge-applied").replace("badge-", "status-");
+    return `<select class="status-select ${statusClass}" data-company="${encodeURIComponent(application.company || "")}" data-position="${encodeURIComponent(application.position || "")}" data-applied-date="${encodeURIComponent(application.appliedDate || "")}" data-source-message-id="${encodeURIComponent(application.sourceMessageId || "")}">${options}</select>`;
+  }
+
+  async function refreshResearchStatus() {
+    const res = await fetch("/api/applications/refresh-status");
+    const job = await res.json();
+    const button = document.getElementById("refresh-button");
+    const status = document.getElementById("refresh-status");
+    button.disabled = job.running;
+    if (job.running) {
+      button.textContent = "Refreshing…";
+      status.textContent = `${job.processedCompanies} of ${job.totalCompanies} companies checked`;
+    } else {
+      button.textContent = "Refresh company info";
+      status.textContent = job.finishedAt
+        ? `Last refresh: ${job.updatedRows} application${job.updatedRows === 1 ? "" : "s"} updated; ${job.skippedCompanies} kept unchanged.`
+        : "";
+    }
+  }
+
+  document.getElementById("refresh-button").addEventListener("click", async () => {
+    const button = document.getElementById("refresh-button");
+    button.disabled = true;
+    button.textContent = "Starting…";
+    const res = await fetch("/api/applications/refresh", { method: "POST" });
+    if (!res.ok) {
+      const message = await res.json().catch(() => ({}));
+      document.getElementById("refresh-status").textContent = message.error || "Could not start refresh.";
+      button.disabled = false;
+      button.textContent = "Refresh company info";
+      return;
+    }
+    refreshResearchStatus();
+  });
+
+  document.querySelectorAll(".filter-button").forEach(button => {
+    button.addEventListener("click", () => {
+      if (openFilterColumn === button.dataset.filter) {
+        closeFilterMenu();
+        return;
+      }
+      renderFilterMenu(button.dataset.filter, button);
+    });
+  });
+
+  document.getElementById("filter-menu").addEventListener("input", event => {
+    if (!event.target.matches(".filter-search")) return;
+    const query = event.target.value.trim().toLowerCase();
+    document.querySelectorAll(".filter-option[data-filter-value]").forEach(option => {
+      option.style.display = option.dataset.filterValue.includes(query) ? "flex" : "none";
+    });
+  });
+
+  document.getElementById("filter-menu").addEventListener("change", event => {
+    if (event.target.matches(".filter-all")) {
+      document.querySelectorAll(".filter-value").forEach(input => { input.checked = event.target.checked; });
+      return;
+    }
+    if (event.target.matches(".filter-value")) {
+      const values = [...document.querySelectorAll(".filter-value")];
+      document.querySelector(".filter-all").checked = values.every(input => input.checked);
+    }
+  });
+
+  document.getElementById("filter-menu").addEventListener("click", event => {
+    const sortButton = event.target.closest(".filter-sort");
+    if (sortButton) {
+      sortColumn = openFilterColumn;
+      sortDirection = sortButton.dataset.direction;
+      closeFilterMenu();
+      loadDashboard();
+      return;
+    }
+    if (event.target.matches(".clear")) {
+      document.querySelectorAll(".filter-value").forEach(input => { input.checked = false; });
+      document.querySelector(".filter-all").checked = false;
+      return;
+    }
+    if (!event.target.matches(".apply")) return;
+    const values = valuesForColumn(openFilterColumn);
+    const selected = new Set([...document.querySelectorAll(".filter-value:checked")].map(input => decodeURIComponent(input.value)));
+    if (selected.size === values.length) activeFilters.delete(openFilterColumn);
+    else activeFilters.set(openFilterColumn, selected);
+    closeFilterMenu();
+    loadDashboard();
+  });
+
+  document.addEventListener("click", event => {
+    const menu = document.getElementById("filter-menu");
+    if (menu.classList.contains("open") && !menu.contains(event.target) && !event.target.closest(".filter-button")) closeFilterMenu();
+  });
+
+  document.getElementById("table-body").addEventListener("change", async event => {
+    const select = event.target.closest(".status-select");
+    if (!select) return;
+    select.disabled = true;
+    const response = await fetch("/api/applications/status", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        company: decodeURIComponent(select.dataset.company),
+        position: decodeURIComponent(select.dataset.position),
+        appliedDate: decodeURIComponent(select.dataset.appliedDate),
+        sourceMessageId: decodeURIComponent(select.dataset.sourceMessageId),
+        status: select.value,
+      }),
+    });
+    if (!response.ok) {
+      await loadDashboard();
+      return;
+    }
+    await loadDashboard();
+  });
+
+  loadDashboard();
+  updateFilterButtons();
+  refreshResearchStatus();
+  setInterval(loadDashboard, 30000);
+  setInterval(refreshResearchStatus, 2000);
+</script>
+</body>
+</html>

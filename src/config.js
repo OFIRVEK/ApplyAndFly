@@ -11,6 +11,13 @@ console.log("ENV TO NUMBER:", process.env.WHATSAPP_TO_NUMBER);
 export const config = {
   port: 3000,
 
+  app: {
+    // Set to the public Render/custom-domain URL in production, e.g.
+    // https://applyandfly.example.com. Left blank locally so WhatsApp never
+    // receives an unusable localhost link.
+    publicUrl: (process.env.PUBLIC_APP_URL || "").replace(/\/+$/, ""),
+  },
+
   google: {
     clientId: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
@@ -26,5 +33,13 @@ export const config = {
 
   groq: {
     apiKey: process.env.GROQ_API_KEY,
+  },
+
+  tavily: {
+    apiKey: process.env.TAVILY_API_KEY,
+  },
+
+  firecrawl: {
+    apiKey: process.env.FIRECRAWL_API_KEY,
   },
 };
