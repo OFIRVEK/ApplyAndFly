@@ -5,7 +5,7 @@ import { config } from "./config.js";
 import { oauth2Client, getAuthUrl } from "./auth.js";
 import { getGmailClient, listEmails, listEmailsByFolder, getEmail, decodeEmail, decodeEmailHtml } from "./gmail.js";
 import { isJobEmail, hasStrongConfirmationPhrase, looksLikeRejection, looksLikeInterviewStage, looksLikeOffer, looksNonEnglish, looksJobRelatedNonEnglish, looksPromotional, looksNonJobTransactional, looksLikePayment, looksLikeJobSuggestion, looksLikeAccountNotice, looksLikeIsraeliEmploymentServiceNotice } from "./processor.js";
-import { sendWhatsApp, sendWhatsAppTemplate } from "./whatsapp.js";
+import { sendWhatsApp, sendWhatsAppTemplate, sendWhatsAppCtaUrl } from "./whatsapp.js";
 import { classifyEmail, extractPositionFromSubject, formatConfirmationMessage } from "./enrich.js";
 import { researchCompanyFromEvidence } from "./companyEvidence.js";
 import { addApplication, findApplication, updateApplicationStatus, updateApplicationStatusByRow, upsertApplicationStatus, updateApplicationDescription, updateApplicationResearch, removeApplicationsByCompany, getAllApplications } from "./store.js";
@@ -478,8 +478,10 @@ async function handleIncomingWhatsAppMessage(waId, text) {
   if (!session) {
     sessions.set(waId, { state: "awaiting_oauth" });
     const authUrl = getAuthUrl(createOAuthState(waId));
-    await sendWhatsApp(
-      `👋 Hey, thanks for choosing ApplyAndFly as your applications manager!\n\nFirst, sign in with Google so I can read your Gmail:\n${authUrl}`,
+    await sendWhatsAppCtaUrl(
+      "👋 Hey, thanks for choosing ApplyAndFly as your applications manager!\n\nFirst, sign in with Google so I can read your Gmail:",
+      "Click here to sign in",
+      authUrl,
       waId
     );
     return;
