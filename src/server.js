@@ -480,7 +480,7 @@ async function handleIncomingWhatsAppMessage(waId, text) {
     const authUrl = getAuthUrl(createOAuthState(waId));
     await sendWhatsAppCtaUrl(
       "👋 Hey, thanks for choosing ApplyAndFly as your applications manager!\n\nFirst, sign in with Google so I can read your Gmail:",
-      "Click here to sign in",
+      "Sign in with Google", // WhatsApp caps CTA button display_text at 20 characters
       authUrl,
       waId
     );
