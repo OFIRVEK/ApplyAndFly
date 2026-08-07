@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import crypto from "crypto";
 import { config } from "./config.js";
 import { oauth2Client, getAuthUrl } from "./auth.js";
 import { getGmailClient, listEmails, listEmailsByFolder, getEmail, decodeEmail, decodeEmailHtml } from "./gmail.js";
@@ -74,6 +75,36 @@ let activeRecipient;
 let seen = new Set();
 let pollInProgress = false;
 
+// CSRF protection for the OAuth flow (Google's own security checkup flags
+// omitting this): each authorization attempt gets a random, unguessable
+// token that's issued here and re-checked in the callback, so the callback
+// only ever completes an auth flow this server actually started — not one
+// forged by an attacker. Also carries the WhatsApp ID through for the
+// onboarding flow, replacing the old approach of putting the waId directly
+// in `state` (predictable, and not validated against anything server-side).
+const pendingOAuthStates = new Map();
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+
+function createOAuthState(waId = null) {
+  const now = Date.now();
+  for (const [token, entry] of pendingOAuthStates) {
+    if (now - entry.createdAt > OAUTH_STATE_TTL_MS) pendingOAuthStates.delete(token);
+  }
+  const token = crypto.randomBytes(24).toString("hex");
+  pendingOAuthStates.set(token, { waId, createdAt: now });
+  return token;
+}
+
+// One-time use: consuming a state token removes it, so a captured/replayed
+// callback URL can't be completed a second time.
+function consumeOAuthState(token) {
+  if (!token || !pendingOAuthStates.has(token)) return null;
+  const entry = pendingOAuthStates.get(token);
+  pendingOAuthStates.delete(token);
+  if (Date.now() - entry.createdAt > OAUTH_STATE_TTL_MS) return null;
+  return entry;
+}
+
 // One entry per WhatsApp user who has started onboarding. Keyed by their
 // WhatsApp ID (phone number). Single-user in practice today, but keyed this
 // way so it's ready for more than one WhatsApp identity later.
@@ -137,7 +168,7 @@ let authInProgress = false;
  * STEP 1: start OAuth
  */
 app.get("/auth/google", (req, res) => {
-  const url = getAuthUrl();
+  const url = getAuthUrl(createOAuthState());
   console.log("Redirecting to Google OAuth:", url);
   res.redirect(url);
 });
@@ -154,7 +185,6 @@ app.get("/auth/google/callback", async (req, res) => {
     authInProgress = true;
 
     const code = req.query.code;
-    const waId = req.query.state; // present when this OAuth flow started from WhatsApp
 
     // 🔥 THIS is your "Missing OAuth code" safeguard
     if (!code) {
@@ -163,6 +193,15 @@ app.get("/auth/google/callback", async (req, res) => {
         "Missing OAuth code. You must start from /auth/google"
       );
     }
+
+    const stateEntry = consumeOAuthState(req.query.state);
+    if (!stateEntry) {
+      authInProgress = false;
+      return res.status(400).send(
+        "Invalid or expired auth request. You must start from /auth/google"
+      );
+    }
+    const waId = stateEntry.waId; // present when this OAuth flow started from WhatsApp
 
     const { tokens } = await oauth2Client.getToken(code);
 
@@ -429,7 +468,7 @@ async function handleIncomingWhatsAppMessage(waId, text) {
 
   if (!session) {
     sessions.set(waId, { state: "awaiting_oauth" });
-    const authUrl = getAuthUrl(waId);
+    const authUrl = getAuthUrl(createOAuthState(waId));
     await sendWhatsApp(
       `👋 Hey, thanks for choosing ApplyAndFly as your applications manager!\n\nFirst, sign in with Google so I can read your Gmail:\n${authUrl}`,
       waId
