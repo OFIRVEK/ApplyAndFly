@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Policy — ApplyAndFly</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem 4rem;
+      color: #1f2328;
+      background: #ffffff;
+    }
+    @media (prefers-color-scheme: dark) {
+      body { color: #e6edf3; background: #0d1117; }
+      a { color: #79c0ff; }
+      hr { border-color: #30363d; }
+      .box { background: #161b22; border-color: #30363d; }
+    }
+    h1 { font-size: 1.75rem; margin-bottom: 0.25rem; }
+    h2 { font-size: 1.15rem; margin-top: 2.25rem; }
+    .updated { color: #6b7280; font-size: 0.9rem; margin-bottom: 2rem; }
+    ul { padding-left: 1.25rem; }
+    li { margin-bottom: 0.4rem; }
+    .box {
+      background: #f6f8fa;
+      border: 1px solid #d0d7de;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin: 1.25rem 0;
+    }
+    a { color: #0969da; }
+  </style>
+</head>
+<body>
+  <h1>Privacy Policy — ApplyAndFly</h1>
+  <p class="updated">Last updated: August 7, 2026</p>
+
+  <p>
+    ApplyAndFly ("the app") is a personal job-application assistant. It reads
+    your Gmail inbox to detect job-application confirmation emails, looks up
+    public information about the hiring company, and sends you a summary over
+    WhatsApp. This page explains what data the app accesses, how it's used,
+    and who it's shared with.
+  </p>
+
+  <h2>Who runs this app</h2>
+  <p>
+    ApplyAndFly is operated by an individual developer for personal use, not
+    a company. Contact for any privacy question or data request:
+    <a href="mailto:ofirvqa@gmail.com">ofirvqa@gmail.com</a>.
+  </p>
+
+  <h2>What data the app accesses</h2>
+  <ul>
+    <li>
+      <strong>Gmail (read-only).</strong> Using Google's
+      <code>gmail.readonly</code> scope, the app reads the subject, sender,
+      date, and body of messages already in your inbox to identify job-application
+      confirmations, rejections, interview invitations, and offers. The app
+      never sends, modifies, labels, forwards, or deletes any email, and never
+      accesses attachments beyond the message text itself.
+    </li>
+    <li>
+      <strong>WhatsApp messages.</strong> Your WhatsApp phone number and the
+      text of messages exchanged with the app, used solely to deliver
+      notifications and handle setup (e.g. connecting your Google account).
+    </li>
+    <li>
+      <strong>Application data you generate.</strong> Company name, job
+      title, application status, and a short company summary are stored so
+      the app can show you a dashboard of your applications.
+    </li>
+  </ul>
+
+  <h2>How your data is used</h2>
+  <p>
+    Email content is analyzed only to determine whether a message is a
+    genuine job-application update and, if so, to extract the company name
+    and position. Once a company is identified, the app searches public web
+    sources to build a short company summary, then sends that summary to you
+    over WhatsApp. Nothing is used for advertising, and your data is never
+    sold.
+  </p>
+
+  <h2>Third-party services involved in processing</h2>
+  <p>Because the app performs real-time research and delivers messages, the following third parties process data on the app's behalf:</p>
+  <div class="box">
+    <ul>
+      <li><strong>Google (Gmail API)</strong> — provides read-only access to your inbox, per your explicit OAuth consent.</li>
+      <li><strong>Meta / WhatsApp Business Platform</strong> — delivers and receives WhatsApp messages.</li>
+      <li><strong>Groq</strong> (LLM inference) — receives the text of a candidate email to classify it and to summarize company research; does not receive your Gmail credentials.</li>
+      <li><strong>Tavily</strong> (web search) — receives the company name and job details (not your email content) to find the company's official website and public information.</li>
+      <li><strong>Firecrawl</strong> (web crawling) — reads the verified public website of a company you applied to, to gather accurate company details.</li>
+    </ul>
+  </div>
+  <p>
+    These services only receive the minimum information needed to perform
+    their specific function (e.g. Tavily and Firecrawl never see your Gmail
+    content; they only see company names and public web addresses).
+  </p>
+
+  <h2>Data storage and retention</h2>
+  <ul>
+    <li>Application tracking data (company, position, status, dates) is stored on the app's own server and is not shared publicly.</li>
+    <li>Google authentication is kept in memory for the running server process only and is not written to disk; it is cleared whenever the server restarts, requiring you to reconnect.</li>
+    <li>You may request deletion of any stored data at any time by contacting <a href="mailto:ofirvqa@gmail.com">ofirvqa@gmail.com</a>.</li>
+  </ul>
+
+  <h2>Your controls</h2>
+  <ul>
+    <li>Revoke Gmail access at any time from <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google Account → Security → Third-party access</a>.</li>
+    <li>Stop WhatsApp notifications at any time by blocking the number or messaging the app to opt out.</li>
+  </ul>
+
+  <h2>Children's privacy</h2>
+  <p>This app is not directed at, and is not knowingly used by, children under 16.</p>
+
+  <h2>Changes to this policy</h2>
+  <p>
+    This policy may be updated as the app changes. The "Last updated" date
+    above reflects the most recent revision.
+  </p>
+
+  <hr>
+  <p><a href="/dashboard">← Back to dashboard</a></p>
+</body>
+</html>

@@ -164,6 +164,15 @@ function ts() {
 // 🔥 ADD THIS (fix race / duplicate callback issues)
 let authInProgress = false;
 
+// Plain res.send(text) has no <title>, so the browser tab falls back to
+// showing the raw URL instead of the app name — wrapping status pages in
+// this keeps the tab readable as "ApplyAndFly".
+function sendStatusPage(res, message) {
+  res.set("Content-Type", "text/html").send(
+    `<!doctype html><html><head><meta charset="utf-8"><title>ApplyAndFly</title></head><body style="font-family: sans-serif; padding: 2rem;">${message}</body></html>`
+  );
+}
+
 /**
  * STEP 1: start OAuth
  */
@@ -179,7 +188,7 @@ app.get("/auth/google", (req, res) => {
 app.get("/auth/google/callback", async (req, res) => {
   try {
     if (authInProgress) {
-      return res.send("Auth already processing...");
+      return sendStatusPage(res, "Auth already processing...");
     }
 
     authInProgress = true;
@@ -219,10 +228,10 @@ app.get("/auth/google/callback", async (req, res) => {
         `✅ Google connected!\n\nDo you have a folder where you moved your recent job application emails? If yes, reply with its name. If not, reply "Continue".`,
         waId
       );
-      return res.send("✅ Auth successful — check WhatsApp to finish setup.");
+      return sendStatusPage(res, "✅ Auth successful — check WhatsApp to finish setup.");
     }
 
-    res.send("✅ Auth successful. Bot is now running.");
+    sendStatusPage(res, "✅ Auth successful. Bot is now running.");
   } catch (err) {
     authInProgress = false;
 
