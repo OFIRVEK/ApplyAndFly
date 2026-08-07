@@ -286,6 +286,14 @@
   </div>
 
 <script>
+  // The URL path is /dashboard/<token> — every API call must carry this
+  // token so the server knows (and only ever returns/modifies) this one
+  // user's data.
+  const DASHBOARD_TOKEN = location.pathname.split("/").filter(Boolean).pop();
+  function authHeaders(extra = {}) {
+    return { "X-Dashboard-Token": DASHBOARD_TOKEN, ...extra };
+  }
+
   const STATUS_BADGE = {
     "Applied": "badge-applied",
     "In Progress": "badge-progress",
@@ -379,7 +387,7 @@
   }
 
   async function loadDashboard() {
-    const res = await fetch("/api/applications");
+    const res = await fetch("/api/applications", { headers: authHeaders() });
     allApplications = await res.json();
     const apps = filteredApplications();
 
@@ -445,7 +453,7 @@
   }
 
   async function refreshResearchStatus() {
-    const res = await fetch("/api/applications/refresh-status");
+    const res = await fetch("/api/applications/refresh-status", { headers: authHeaders() });
     const job = await res.json();
     const button = document.getElementById("refresh-button");
     const status = document.getElementById("refresh-status");
@@ -465,7 +473,7 @@
     const button = document.getElementById("refresh-button");
     button.disabled = true;
     button.textContent = "Starting…";
-    const res = await fetch("/api/applications/refresh", { method: "POST" });
+    const res = await fetch("/api/applications/refresh", { method: "POST", headers: authHeaders() });
     if (!res.ok) {
       const message = await res.json().catch(() => ({}));
       document.getElementById("refresh-status").textContent = message.error || "Could not start refresh.";
@@ -539,7 +547,7 @@
     select.disabled = true;
     const response = await fetch("/api/applications/status", {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         company: decodeURIComponent(select.dataset.company),
         position: decodeURIComponent(select.dataset.position),

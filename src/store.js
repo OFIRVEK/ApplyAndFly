@@ -1,8 +1,11 @@
 import fs from "fs";
 import path from "path";
+import { backupFile } from "./backup.js";
 
-// Deliberately simple: one flat JSON file, no real database. Matches for the
-// dashboard feature — a single-user personal tool doesn't need more than this.
+// Deliberately simple: one flat JSON file, no real database. Every row is
+// tagged with the WhatsApp ID of the user it belongs to — every lookup and
+// mutation below filters by that owner, so one user's dashboard action can
+// never see or touch another user's rows even if they guess a company name.
 const STORE_FILE = path.resolve(process.cwd(), "applications.json");
 
 function loadApplications() {
@@ -16,6 +19,7 @@ function loadApplications() {
 
 function saveApplications(apps) {
   fs.writeFileSync(STORE_FILE, JSON.stringify(apps, null, 2));
+  backupFile(STORE_FILE, "applications.json");
 }
 
 function normalize(company = "") {
@@ -27,8 +31,8 @@ function resolveDate(candidate) {
   return parsed && !isNaN(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
 }
 
-export function findApplication(company, position, sourceMessageId, appliedDate) {
-  const apps = loadApplications();
+export function findApplication(waId, company, position, sourceMessageId, appliedDate) {
+  const apps = loadApplications().filter((a) => a.waId === waId);
   if (sourceMessageId) {
     const exactMessage = apps.find((a) => a.sourceMessageId === sourceMessageId);
     if (exactMessage) return exactMessage;
@@ -52,11 +56,12 @@ export function findApplication(company, position, sourceMessageId, appliedDate)
 // Adds a new tracked application at "Applied" status. Gmail message IDs make
 // restart scans idempotent without treating one company as a single row:
 // separate roles/applications at the same company are intentionally retained.
-export function addApplication({ company, position, briefExplanation, appliedDate, sourceMessageId, research }) {
+export function addApplication({ waId, company, position, briefExplanation, appliedDate, sourceMessageId, research }) {
   const apps = loadApplications();
-  if (sourceMessageId && apps.some((a) => a.sourceMessageId === sourceMessageId)) return false;
+  if (sourceMessageId && apps.some((a) => a.waId === waId && a.sourceMessageId === sourceMessageId)) return false;
 
   apps.push({
+    waId,
     company,
     position,
     briefExplanation,
@@ -73,11 +78,11 @@ export function addApplication({ company, position, briefExplanation, appliedDat
 // Moves an already-tracked application to a new status (In Progress,
 // Rejected, Hired). Does nothing if the company isn't tracked yet — we only
 // update applications that started with a real confirmation.
-export function updateApplicationStatus(company, status, position, eventDate) {
+export function updateApplicationStatus(waId, company, status, position, eventDate) {
   const apps = loadApplications();
   const key = normalize(company);
   const positionKey = normalize(position);
-  const matching = apps.filter((a) => normalize(a.company) === key);
+  const matching = apps.filter((a) => a.waId === waId && normalize(a.company) === key);
   const samePosition = positionKey && !/not specified/i.test(position)
     ? matching.filter((a) => normalize(a.position) === positionKey)
     : matching;
@@ -95,13 +100,14 @@ export function updateApplicationStatus(company, status, position, eventDate) {
   return true;
 }
 
-export function updateApplicationStatusByRow({ company, position, appliedDate, sourceMessageId, status }) {
+export function updateApplicationStatusByRow({ waId, company, position, appliedDate, sourceMessageId, status }) {
   const apps = loadApplications();
   const key = normalize(company);
   const targetDate = appliedDate ? new Date(appliedDate).getTime() : NaN;
   const app = sourceMessageId
-    ? apps.find((entry) => entry.sourceMessageId === sourceMessageId)
+    ? apps.find((entry) => entry.waId === waId && entry.sourceMessageId === sourceMessageId)
     : apps.find((entry) =>
+      entry.waId === waId &&
       normalize(entry.company) === key &&
       normalize(entry.position) === normalize(position) &&
       new Date(entry.appliedDate).getTime() === targetDate
@@ -120,12 +126,12 @@ export function updateApplicationStatusByRow({ company, position, appliedDate, s
 // any other reason). Rather than silently dropping the signal, this backs
 // the row in directly at the target status instead of "Applied" — losing
 // the true apply date, but at least surfacing it on the dashboard.
-export function upsertApplicationStatus({ company, position, briefExplanation, status, fallbackDate, sourceMessageId, research }) {
+export function upsertApplicationStatus({ waId, company, position, briefExplanation, status, fallbackDate, sourceMessageId, research }) {
   const apps = loadApplications();
   const key = normalize(company);
   const positionKey = normalize(position);
-  const existing = (sourceMessageId && apps.find((a) => a.sourceMessageId === sourceMessageId))
-    || apps.find((a) => normalize(a.company) === key && normalize(a.position) === positionKey);
+  const existing = (sourceMessageId && apps.find((a) => a.waId === waId && a.sourceMessageId === sourceMessageId))
+    || apps.find((a) => a.waId === waId && normalize(a.company) === key && normalize(a.position) === positionKey);
 
   if (existing) {
     existing.status = status;
@@ -135,6 +141,7 @@ export function upsertApplicationStatus({ company, position, briefExplanation, s
   }
 
   apps.push({
+    waId,
     company,
     position,
     briefExplanation,
@@ -149,10 +156,10 @@ export function upsertApplicationStatus({ company, position, briefExplanation, s
 
 // Updates just the description on an already-tracked entry (e.g. after a
 // re-enrichment finds better info than what it started with).
-export function updateApplicationDescription(company, briefExplanation) {
+export function updateApplicationDescription(waId, company, briefExplanation) {
   const apps = loadApplications();
   const key = normalize(company);
-  const matching = apps.filter((a) => normalize(a.company) === key);
+  const matching = apps.filter((a) => a.waId === waId && normalize(a.company) === key);
   if (matching.length === 0) return false;
 
   for (const app of matching) {
@@ -167,10 +174,10 @@ export function updateApplicationDescription(company, briefExplanation) {
 // the company/domain. All applications at that company share the same company
 // overview, so they are updated together while retaining their own roles and
 // application dates.
-export function updateApplicationResearch(company, snapshot) {
+export function updateApplicationResearch(waId, company, snapshot) {
   const apps = loadApplications();
   const key = normalize(company);
-  const matching = apps.filter((a) => normalize(a.company) === key);
+  const matching = apps.filter((a) => a.waId === waId && normalize(a.company) === key);
   if (matching.length === 0) return 0;
 
   const research = {
@@ -187,15 +194,15 @@ export function updateApplicationResearch(company, snapshot) {
   return matching.length;
 }
 
-export function removeApplicationsByCompany(company) {
+export function removeApplicationsByCompany(waId, company) {
   const apps = loadApplications();
   const key = normalize(company);
-  const remaining = apps.filter((app) => normalize(app.company) !== key);
+  const remaining = apps.filter((app) => !(app.waId === waId && normalize(app.company) === key));
   const removed = apps.length - remaining.length;
   if (removed > 0) saveApplications(remaining);
   return removed;
 }
 
-export function getAllApplications() {
-  return loadApplications();
+export function getAllApplications(waId) {
+  return loadApplications().filter((a) => a.waId === waId);
 }

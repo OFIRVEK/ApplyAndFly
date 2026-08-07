@@ -407,11 +407,10 @@ export async function enrichCompany({ company, position, fromHeader, body, html 
   return enrichCompanyOnce({ company, position, websiteBlurb: blurb });
 }
 
+// The dashboard link is sent separately as a tappable CTA button (see
+// server.js) rather than embedded as raw text here — WhatsApp only lets a
+// button carry custom link text, plain message text can't.
 export function formatConfirmationMessage(details, snapshot, dateHeader) {
-  const dashboardLink = config.app.publicUrl
-    ? `\n\n📊 View and manage your applications:\n${config.app.publicUrl}/dashboard`
-    : "";
-
   return `🚀 ApplyAndFly
 
 We detected a new application update.
@@ -428,15 +427,8 @@ ${details.status}
 📅 Timeline
 Application received ${formatReceivedDate(dateHeader)}.
 
-🏢 Company Snapshot
-• ${snapshot.employees} employees
-• ${snapshot.industry}
-• Headquarters: ${snapshot.hq}
-• ${snapshot.publicPrivate}
-
 ⭐ What they do
 ${snapshot.whatTheyDo}
-${dashboardLink}
 
 Good luck! 🍀`;
 }

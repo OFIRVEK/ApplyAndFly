@@ -22,6 +22,9 @@ export const config = {
     clientId: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     redirectUri: process.env.GOOGLE_REDIRECT_URI,
+    // Full Pub/Sub topic name (projects/<project-id>/topics/<topic-name>)
+    // used to register Gmail push notifications via users.watch().
+    pubsubTopic: process.env.GMAIL_PUBSUB_TOPIC,
   },
 
   whatsapp: {
@@ -41,5 +44,13 @@ export const config = {
 
   firecrawl: {
     apiKey: process.env.FIRECRAWL_API_KEY,
+  },
+
+  gcs: {
+    bucket: process.env.GCS_BUCKET_NAME,
+    // Full JSON key file content for a service account with Storage Object
+    // Admin on that bucket. Used to persist applications.json/users.json
+    // across Render redeploys, which otherwise wipe the local disk.
+    serviceAccountKey: process.env.GCS_SERVICE_ACCOUNT_KEY,
   },
 };

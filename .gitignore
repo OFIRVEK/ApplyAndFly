@@ -3,3 +3,4 @@ node_modules/
 seen.json
 applications.json
 classificationCache.json
+users.json
