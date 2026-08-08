@@ -207,12 +207,16 @@ async function resolveCompany({ company, position, fromHeader, body, html }) {
   addDomainsFromEmail(candidates, body, html);
 
   // A company already resolved before doesn't need to spend Tavily search
-  // quota again — re-verify the cached domain still identifies as this
-  // company (a direct fetch, no Tavily cost) and reuse it if so. Falls
-  // through to the full Tavily-backed resolution below if the cached domain
-  // has gone stale or unreachable.
+  // quota again — but a name-text match alone isn't enough to trust the
+  // cache: two unrelated real companies can share a generic name (e.g. two
+  // different companies both called "Sela"), and a text match against the
+  // cached domain's homepage would false-positive on either one. Only
+  // short-circuit when THIS email independently corroborates the cached
+  // domain (sender domain or a link in the email body pointing at it) —
+  // otherwise fall through to the full Tavily-backed resolution below,
+  // which re-derives the domain from this email's own evidence.
   const cached = getCachedCompanyIdentity(company);
-  if (cached?.verified && cached.domain) {
+  if (cached?.verified && cached.domain && candidates.has(rootDomain(cached.domain))) {
     try {
       const page = await fetchPage(`https://${cached.domain}`);
       const identityText = [
