@@ -1,6 +1,7 @@
 import axios from "axios";
 import { askGroqForJson, extractSenderDomain, isAtsOrGenericDomain } from "./enrich.js";
 import { tavilySearch } from "./tavily.js";
+import { getCachedCompanyIdentity, setCachedCompanyIdentity } from "./companyIdentityCache.js";
 
 // Evidence-first company research.
 //
@@ -205,6 +206,35 @@ async function resolveCompany({ company, position, fromHeader, body, html }) {
   if (senderDomain) addCandidate(candidates, senderDomain, { type: "corporate-email-sender", score: 45 });
   addDomainsFromEmail(candidates, body, html);
 
+  // A company already resolved before doesn't need to spend Tavily search
+  // quota again — re-verify the cached domain still identifies as this
+  // company (a direct fetch, no Tavily cost) and reuse it if so. Falls
+  // through to the full Tavily-backed resolution below if the cached domain
+  // has gone stale or unreachable.
+  const cached = getCachedCompanyIdentity(company);
+  if (cached?.verified && cached.domain) {
+    try {
+      const page = await fetchPage(`https://${cached.domain}`);
+      const identityText = [
+        page.title, page.siteName, page.description,
+        ...page.organizations.flatMap((organization) => [organization.name, organization.description]),
+      ].filter(Boolean).join(" ");
+      if (companyMatches(identityText, company)) {
+        return {
+          verified: true,
+          domain: cached.domain,
+          score: cached.score,
+          homepage: page,
+          sourceUrls: cached.sourceUrls || [],
+          linkedinUrl: cached.linkedinUrl || null,
+        };
+      }
+      console.log(`[company-resolve] cached domain for "${company}" no longer matches, re-resolving via Tavily`);
+    } catch {
+      console.log(`[company-resolve] cached domain for "${company}" unreachable, re-resolving via Tavily`);
+    }
+  }
+
   const queries = [`"${company}" official website`];
   if (position && !/not specified/i.test(position)) queries.push(`"${company}" "${position}"`);
   queries.push(`site:linkedin.com/company "${company}"`);
@@ -267,7 +297,7 @@ async function resolveCompany({ company, position, fromHeader, body, html }) {
     evidenceTypes.has("official-site-identity")
   );
 
-  return {
+  const result = {
     verified,
     domain: verified ? winner.domain : null,
     score: winner ? Math.min(100, winner.score) : 0,
@@ -275,6 +305,18 @@ async function resolveCompany({ company, position, fromHeader, body, html }) {
     sourceUrls: verified ? [...winner.sourceUrls] : [],
     linkedinUrl: linkedinResults[0]?.url || null,
   };
+
+  if (result.verified) {
+    setCachedCompanyIdentity(company, {
+      verified: true,
+      domain: result.domain,
+      score: result.score,
+      sourceUrls: result.sourceUrls,
+      linkedinUrl: result.linkedinUrl,
+    });
+  }
+
+  return result;
 }
 
 function pageEvidence(page) {

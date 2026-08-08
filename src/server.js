@@ -785,6 +785,7 @@ async function processMessageInner(gmail, m, waId) {
       setCachedClassification(m.id, details);
     } catch (err) {
       console.error(`[${ts()}] Enrichment error (id=${m.id}):`, err.response?.data || err.message || err);
+      seen.delete(seenKey);
       return;
     }
   }
@@ -812,6 +813,7 @@ async function processMessageInner(gmail, m, waId) {
       return true;
     } catch (err) {
       console.error(`[${ts()}] Enrichment error backfilling ${details.company} (id=${m.id}):`, err.response?.data || err.message || err);
+      seen.delete(seenKey);
       return false;
     }
   };
@@ -873,6 +875,7 @@ async function processMessageInner(gmail, m, waId) {
     });
   } catch (err) {
     console.error(`[${ts()}] Enrichment error (id=${m.id}):`, err.response?.data || err.message || err);
+    seen.delete(seenKey);
     return;
   }
 
