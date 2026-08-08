@@ -640,9 +640,25 @@ async function handleIncomingWhatsAppMessage(waId, text) {
   if (session.state === "awaiting_folder_answer") {
     const folder = text.toLowerCase() === "continue" ? null : text;
 
+    // Backfill existing applications before switching to "watch for new
+    // ones" mode — the dashboard should start populated, not empty. The
+    // named folder (if any) is scanned in addition to the Inbox, not
+    // instead of it, since ongoing detection always watches the Inbox.
+    await sendWhatsApp(
+      folder
+        ? `Got it — scanning "${folder}" and your Inbox for existing applications first. This might take a bit...`
+        : `Got it — scanning your Inbox for existing applications first. This might take a bit...`,
+      waId
+    );
+
     if (folder) {
-      await sendWhatsApp(`Got it — scanning "${folder}" for existing applications first...`, waId);
       await scanFolderOnce(waId, folder);
+    }
+
+    const user = getUser(waId);
+    if (user?.tokens) {
+      const gmail = getGmailClient(createUserOAuthClient(waId, user.tokens));
+      await scanInboxOnce(waId, gmail);
     }
 
     // Each user gets their own unguessable dashboard link — nobody else can
@@ -884,6 +900,17 @@ async function scanFolderOnce(waId, folderName) {
   }
 }
 
+// Backfills existing Inbox applications — used both at onboarding (so the
+// dashboard starts populated with everything already there, not just
+// whatever arrives afterward) and by poll()'s recurring safety-net scan.
+async function scanInboxOnce(waId, gmail) {
+  const messages = await listEmails(gmail);
+  console.log(`[onboarding] scanning Inbox for ${waId}: ${messages.length} messages`);
+  for (const m of messages) {
+    await processMessage(gmail, m, waId);
+  }
+}
+
 /**
  * EMAIL POLLING — no longer the primary detection path (Gmail push
  * notifications are); this is now a coarse safety net plus watch-renewal
@@ -908,10 +935,7 @@ async function poll() {
           await startOrRenewWatch(user.waId, gmail);
         }
 
-        const messages = await listEmails(gmail);
-        for (const m of messages) {
-          await processMessage(gmail, m, user.waId);
-        }
+        await scanInboxOnce(user.waId, gmail);
       } catch (err) {
         console.error(`Poll error for ${user.waId}:`, err.response?.data || err.message || err);
       }

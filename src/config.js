@@ -46,11 +46,12 @@ export const config = {
     apiKey: process.env.FIRECRAWL_API_KEY,
   },
 
-  gcs: {
-    bucket: process.env.GCS_BUCKET_NAME,
-    // Full JSON key file content for a service account with Storage Object
-    // Admin on that bucket. Used to persist applications.json/users.json
-    // across Render redeploys, which otherwise wipe the local disk.
-    serviceAccountKey: process.env.GCS_SERVICE_ACCOUNT_KEY,
+  firebase: {
+    // Full JSON key file content for a Firebase service account (Project
+    // Settings -> Service Accounts -> Generate new private key). Used to
+    // persist applications.json/users.json to Firestore across Render
+    // redeploys, which otherwise wipe the local disk. The project ID is
+    // read directly from this key, so no separate env var is needed.
+    serviceAccountKey: process.env.FIREBASE_SERVICE_ACCOUNT_KEY,
   },
 };
