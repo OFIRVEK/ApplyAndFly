@@ -640,6 +640,16 @@ async function handleIncomingWhatsAppMessage(waId, text) {
   if (session.state === "awaiting_folder_answer") {
     const folder = text.toLowerCase() === "continue" ? null : text;
 
+    // Each user gets their own unguessable dashboard link — nobody else can
+    // view or modify their data, not even by knowing their WhatsApp number.
+    // Generated BEFORE the backfill scans below (not after) so every
+    // notification sent during backfill already has it attached, not just
+    // ones sent afterward — this was a real bug: the token used to only
+    // get created once the scans finished, so every historical-application
+    // notification during onboarding shipped with no dashboard link at all.
+    const dashboardToken = crypto.randomBytes(24).toString("hex");
+    upsertUser(waId, { folder, dashboardToken });
+
     // Backfill existing applications before switching to "watch for new
     // ones" mode — the dashboard should start populated, not empty. The
     // named folder (if any) is scanned in addition to the Inbox, not
@@ -661,10 +671,6 @@ async function handleIncomingWhatsAppMessage(waId, text) {
       await scanInboxOnce(waId, gmail);
     }
 
-    // Each user gets their own unguessable dashboard link — nobody else can
-    // view or modify their data, not even by knowing their WhatsApp number.
-    const dashboardToken = crypto.randomBytes(24).toString("hex");
-    upsertUser(waId, { folder, dashboardToken });
     sessions.set(waId, { state: "onboarded", folder });
 
     await sendWhatsApp(
