@@ -1,5 +1,6 @@
 import fs from "fs";
-import admin from "firebase-admin";
+import { initializeApp, cert, getApps } from "firebase-admin/app";
+import { getFirestore as getFirestoreInstance, FieldValue } from "firebase-admin/firestore";
 import { config } from "./config.js";
 
 // Reuses the same Google account already used for OAuth (Firebase attaches
@@ -14,14 +15,22 @@ import { config } from "./config.js";
 // holding the whole array under a "records" field — this mirrors the old
 // GCS blob-upload approach and keeps this module's external interface
 // (restoreAndMerge/backupFile) completely unchanged for its callers.
+//
+// Uses firebase-admin's modern modular API (firebase-admin/app,
+// firebase-admin/firestore) rather than the old default-import style — the
+// installed v14+ package doesn't expose admin.credential/.firestore() the
+// old way, and using the old style threw "Cannot read properties of
+// undefined (reading 'cert')" at startup.
 let firestore = null;
 
 function getFirestore() {
   if (!config.firebase.serviceAccountKey) return null;
   if (!firestore) {
     const credentials = JSON.parse(config.firebase.serviceAccountKey);
-    admin.initializeApp({ credential: admin.credential.cert(credentials) });
-    firestore = admin.firestore();
+    if (!getApps().length) {
+      initializeApp({ credential: cert(credentials) });
+    }
+    firestore = getFirestoreInstance();
   }
   return firestore;
 }
@@ -78,6 +87,6 @@ export function backupFile(localPath, remoteObjectName) {
   const records = readLocalJson(localPath);
   db.collection("backups").doc(remoteObjectName).set({
     records,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
   }).catch((err) => console.error(`[backup] failed to upload ${remoteObjectName}:`, err.message || err));
 }
