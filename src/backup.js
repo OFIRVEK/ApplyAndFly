@@ -68,7 +68,10 @@ export async function restoreAndMerge(localPath, remoteObjectName, idFn) {
 
   const local = readLocalJson(localPath);
   const remote = await downloadRemoteJson(db, remoteObjectName);
-  if (remote.length === 0 && local.length === 0) return;
+  if (remote.length === 0 && local.length === 0) {
+    console.log(`[backup] nothing to restore for ${remoteObjectName} yet (both local and Firestore are empty)`);
+    return;
+  }
 
   const merged = new Map(remote.map((record) => [idFn(record), record]));
   for (const record of local) merged.set(idFn(record), record);
