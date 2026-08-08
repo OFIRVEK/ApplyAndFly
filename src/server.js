@@ -497,6 +497,18 @@ function isVerifiedResearch(snapshot) {
     && !/could not be confidently verified|not verified/i.test(snapshot.whatTheyDo);
 }
 
+// Same bar as isVerifiedResearch, applied to an already-stored row instead
+// of a fresh snapshot — lets the refresh job tell "already has good,
+// verified info" apart from "unverified/missing", so a re-research never
+// clobbers a row that's already correct.
+function isApplicationAlreadyVerified(application) {
+  return isVerifiedResearch({
+    confidence: application.research?.confidence || 0,
+    sources: application.research?.sources || [],
+    whatTheyDo: application.briefExplanation,
+  });
+}
+
 async function refreshDashboardResearch(waId, companyFilter = null) {
   const user = getUser(waId);
   if (!user?.tokens) return;
@@ -527,6 +539,11 @@ async function refreshDashboardResearch(waId, companyFilter = null) {
       const application = applicationsAtCompany[0];
       const job = researchRefreshJobs.get(waId);
       try {
+        if (isApplicationAlreadyVerified(application)) {
+          job.skippedCompanies += 1;
+          continue;
+        }
+
         const email = await findHistoricalConfirmation(gmail, application);
         if (!email) {
           job.skippedCompanies += 1;
@@ -547,10 +564,7 @@ async function refreshDashboardResearch(waId, companyFilter = null) {
           continue;
         }
 
-        const oldDescription = applicationsAtCompany[0].briefExplanation?.trim() || "";
-        if (oldDescription !== snapshot.whatTheyDo.trim()) {
-          job.updatedRows += updateApplicationResearch(waId, application.company, snapshot);
-        }
+        job.updatedRows += updateApplicationResearch(waId, application.company, snapshot);
       } catch (err) {
         job.errors.push({
           company: application.company,

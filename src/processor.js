@@ -188,18 +188,23 @@ const PAYMENT_KEYWORDS = [
   'סכום לתשלום', 'סה"כ לתשלום', 'אמצעי תשלום', 'סכום כולל', 'אישור תשלום',
 ];
 
-// Automated Google account/security notifications (OAuth consent grants,
-// new sign-in alerts, password-changed emails, etc.) always come from
-// google.com itself and are NEVER job-application confirmations — but their
-// boilerplate legitimately contains words like "application" (as in
-// "third-party application"), which is enough to fool both the keyword
-// pre-filter and, sometimes, the classification LLM. Checking the sender's
-// actual domain is a hard, reliable signal that phrase-matching can't be.
+// Automated service notifications — Google account/security alerts (OAuth
+// consent grants, new sign-in alerts, password-changed emails), and this
+// app's own hosting platform (Render deploy/cron-job alerts) — always come
+// from a known infra domain and are NEVER job-application confirmations.
+// But their boilerplate can legitimately contain the exact generic words
+// the keyword pre-filter looks for: Google's "third-party application", or
+// Render's own "job" terminology in something like "Your deploy job
+// failed", which is enough to fool both the keyword pre-filter and,
+// sometimes, the classification LLM. Checking the sender's actual domain is
+// a hard, reliable signal that phrase-matching can't be.
+const AUTOMATED_SERVICE_DOMAINS = ['google.com', 'render.com'];
+
 export function looksLikeAccountNotice(fromHeader = '') {
   const match = fromHeader.match(/[\w.+-]+@([\w.-]+)/);
   if (!match) return false;
   const domain = match[1].toLowerCase();
-  return domain === 'google.com' || domain.endsWith('.google.com');
+  return AUTOMATED_SERVICE_DOMAINS.some((known) => domain === known || domain.endsWith(`.${known}`));
 }
 
 // Messages from Israel's Employment Service can contain job-related words,
