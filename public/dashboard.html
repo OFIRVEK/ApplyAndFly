@@ -137,7 +137,9 @@
     position: fixed;
     z-index: 10;
     width: 250px;
-    max-height: 390px;
+    max-width: calc(100vw - 20px);
+    max-height: calc(100vh - 20px);
+    overflow-y: auto;
     display: none;
     background: var(--card);
     color: var(--text);
@@ -192,7 +194,6 @@
   .filter-action.apply { background: var(--accent); color: white; }
   .filter-action:hover { color: var(--text); }
   .filter-action.apply:hover { color: white; opacity: 0.9; }
-  }
   tr:last-child td { border-bottom: none; }
   .company { font-weight: 600; }
   .explanation { color: var(--text-secondary); max-width: 340px; }
@@ -347,6 +348,37 @@
   function closeFilterMenu() {
     document.getElementById("filter-menu").classList.remove("open");
     openFilterColumn = null;
+    openFilterButton = null;
+  }
+
+  let openFilterButton = null;
+
+  // Computed fresh every time (not once at click time), and re-run on
+  // resize/zoom via the listener below — clamped on BOTH axes against the
+  // actual viewport, and flips to open upward when there isn't room below,
+  // so the menu (and its Apply button) always stays fully on-screen without
+  // needing to zoom out to reach it.
+  function positionFilterMenu(button, menu) {
+    const rect = button.getBoundingClientRect();
+    const margin = 10;
+    const menuRect = menu.getBoundingClientRect();
+    const menuWidth = menuRect.width || menu.offsetWidth;
+    const menuHeight = menuRect.height || menu.offsetHeight;
+
+    let left = Math.min(rect.left, window.innerWidth - menuWidth - margin);
+    left = Math.max(margin, left);
+
+    let top = rect.bottom + 6;
+    if (top + menuHeight > window.innerHeight - margin) {
+      top = rect.top - menuHeight - 6; // try opening upward instead
+    }
+    // Unconditional final safety clamp — covers the case where the trigger
+    // button itself is near/past the edge of a very short viewport, where
+    // "flip to the other side" alone can still overshoot.
+    top = Math.max(margin, Math.min(top, window.innerHeight - menuHeight - margin));
+
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
   }
 
   function renderFilterMenu(column, button) {
@@ -354,9 +386,7 @@
     const values = valuesForColumn(column);
     pendingFilterValues = new Set(activeFilters.get(column) || values);
     openFilterColumn = column;
-    const rect = button.getBoundingClientRect();
-    menu.style.top = `${rect.bottom + 6}px`;
-    menu.style.left = `${Math.min(rect.left, window.innerWidth - 260)}px`;
+    openFilterButton = button;
     menu.innerHTML = `
       <div class="filter-sorts"><button type="button" class="filter-sort" data-direction="asc">A → Z</button><button type="button" class="filter-sort" data-direction="desc">Z → A</button></div>
       <input class="filter-search" type="search" placeholder="Search values" aria-label="Search filter values">
@@ -368,9 +398,20 @@
           <span title="${escapeAttribute(value)}">${escapeHtml(value)}</span>
         </label>`).join("")}</div>
       <div class="filter-actions"><button type="button" class="filter-action clear">Clear</button><button type="button" class="filter-action apply">Apply</button></div>`;
+    // Must be visible (and its real content in place) before measuring —
+    // an unrendered `display:none` element reports a zero height.
     menu.classList.add("open");
+    positionFilterMenu(button, menu);
     menu.querySelector(".filter-search").focus();
   }
+
+  function repositionOpenFilterMenu() {
+    if (!openFilterColumn || !openFilterButton) return;
+    positionFilterMenu(openFilterButton, document.getElementById("filter-menu"));
+  }
+  window.addEventListener("resize", repositionOpenFilterMenu);
+  window.visualViewport?.addEventListener("resize", repositionOpenFilterMenu);
+  window.addEventListener("scroll", repositionOpenFilterMenu, true);
 
   function setPie(prefix, count, total, color) {
     const pct = total > 0 ? Math.round((count / total) * 100) : 0;
