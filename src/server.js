@@ -1032,17 +1032,22 @@ await restoreAndMerge(
   (u) => u.waId
 );
 
-// Every process start (including every Render wake-from-sleep — that's a
-// full restart, not a resume) is a chance to make sure push notifications
-// are actually on, without waiting for poll()'s first tick.
-await ensureWatchesRegistered();
-
-setInterval(poll, POLL_INTERVAL_MS);
-
 /**
- * START SERVER
+ * START SERVER — before the initial poll, not after. A redeploy killing a
+ * scan mid-flight (the new process's `seen` set is empty, but nothing
+ * re-scans the inbox to rediscover that email until poll()'s first tick —
+ * up to 30 minutes later — and Gmail push won't re-report it either, since
+ * the new watch's baseline is already past it) is exactly why poll() also
+ * runs once immediately below. But it must not block app.listen(): each
+ * uncached email classification sleeps 8s, so a slow first scan would leave
+ * WhatsApp/Gmail webhooks unreachable for however long that takes. Starting
+ * the server first, then firing the catch-up poll in the background, gets
+ * both — no missed mail, and no webhook downtime waiting for it.
  */
 app.listen(PORT, () => {
   console.log(`Running on http://localhost:${PORT}`);
   console.log(`START HERE → http://localhost:${PORT}/auth/google`);
 });
+
+poll().catch((err) => console.error("Initial poll failed:", err.response?.data || err.message || err));
+setInterval(poll, POLL_INTERVAL_MS);
