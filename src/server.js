@@ -431,7 +431,13 @@ app.get("/debug/backfill", async (req, res) => {
     const fromHeader = full.payload?.headers?.find((h) => h.name === "From")?.value || "";
 
     const snapshot = await researchCompanyFromEvidence({ company, position, fromHeader, body, html });
-    const updated = updateApplicationDescription(waId, company, snapshot.whatTheyDo);
+    // Was updateApplicationDescription, which writes briefExplanation
+    // unconditionally with no verification check and never touches
+    // .research — that's how a row ends up with real sources sitting next
+    // to a "Not verified" description. updateApplicationResearch applies
+    // the same isVerifiedResearch-equivalent guard as the dashboard Refresh
+    // button and keeps both fields consistent.
+    const updated = isVerifiedResearch(snapshot) ? updateApplicationResearch(waId, company, snapshot) : 0;
 
     res.json({ fromHeader, snapshot, updated });
   } catch (err) {
@@ -731,6 +737,13 @@ async function processMessage(gmail, m, waId) {
     // uncaught error here could silently swallow an email's outcome with no
     // trace at all beyond the initial "matched=..." line.
     console.error(`[${ts()}] Unexpected error processing id=${m.id} for ${waId}:`, err.response?.data || err.message || err);
+    // This is the catch-all for every failure path in processMessageInner,
+    // including the unguarded getEmail() call at its very top — without
+    // this, a single transient Gmail API hiccup permanently blacklists that
+    // email from ever being looked at again for the rest of this process's
+    // uptime, since `seen` would still mark it done. Release it so the next
+    // poll cycle retries instead of silently never showing it anywhere.
+    seen.delete(`${waId}:${m.id}`);
   }
 }
 
