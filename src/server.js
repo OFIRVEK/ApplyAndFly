@@ -640,6 +640,20 @@ async function handleIncomingWhatsAppMessage(waId, text) {
   }
 
   if (!session) {
+    // `sessions` is in-memory only and resets on every restart/redeploy,
+    // but the actual Gmail tokens live in the persisted user store and
+    // survive just fine — so a missing session here doesn't mean this
+    // person was never onboarded, only that this process forgot. Rehydrate
+    // from the durable record instead of blindly restarting Google sign-in
+    // on someone who's already connected (poll()/the push handler already
+    // prove the tokens still work — they're what just sent this person's
+    // notification in the first place).
+    const existingUser = getUser(waId);
+    if (existingUser?.tokens) {
+      sessions.set(waId, { state: "onboarded", folder: existingUser.folder });
+      return;
+    }
+
     sessions.set(waId, { state: "awaiting_oauth" });
     const authUrl = getAuthUrl(createOAuthState(waId));
     await sendWhatsAppCtaUrl(

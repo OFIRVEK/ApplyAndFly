@@ -200,6 +200,84 @@ function extractDomainMentions(text = "") {
     .filter(Boolean))];
 }
 
+// Runs a batch of Tavily queries and folds the results into `candidates` by
+// score. Returns only THIS round's LinkedIn hits (not accumulated across
+// calls) so a caller running a second round never re-scores the same
+// LinkedIn snippet twice.
+async function searchAndScoreCandidates(candidates, queries, company) {
+  const resultGroups = await Promise.all(queries.map((query) => tavilySearch(query, { maxResults: 5 })));
+  const linkedinResults = [];
+  for (let groupIndex = 0; groupIndex < resultGroups.length; groupIndex += 1) {
+    for (let index = 0; index < resultGroups[groupIndex].length; index += 1) {
+      const result = resultGroups[groupIndex][index];
+      const text = `${result.title || ""} ${result.content || ""}`;
+      if (/linkedin\.com\/company\//i.test(result.url || "")) {
+        if (companyMatches(text, company)) linkedinResults.push({ url: result.url, text });
+        continue;
+      }
+
+      const host = hostFromUrl(result.url);
+      if (!host || isBlockedHost(host)) continue;
+      let score = Math.max(8, 25 - index * 4);
+      if (companyMatches(text, company)) score += 15;
+      if (normalize(host).includes(normalize(company))) score += 10;
+      addCandidate(candidates, host, { type: "web-search", score, url: result.url });
+    }
+  }
+
+  // LinkedIn is never fetched. A search-result snippet may corroborate an
+  // official domain only when it explicitly displays that domain.
+  for (const result of linkedinResults) {
+    for (const mentionedDomain of extractDomainMentions(result.text)) {
+      addCandidate(candidates, mentionedDomain, { type: "linkedin-search-snippet", score: 25, url: result.url });
+    }
+  }
+  return linkedinResults;
+}
+
+// Fetches and identity-checks the current top-3 scored candidates, skipping
+// any domain already attempted in an earlier round (`attempted`) so a
+// second search round never re-fetches (and double-scores) the same site.
+async function verifyTopCandidates(candidates, company, attempted) {
+  const top = [...candidates.values()]
+    .filter((candidate) => !attempted.has(candidate.domain))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+
+  for (const candidate of top) {
+    attempted.add(candidate.domain);
+    try {
+      const page = await fetchPage(`https://${candidate.domain}`);
+      const identityText = [
+        page.title, page.siteName, page.description,
+        ...page.organizations.flatMap((organization) => [organization.name, organization.description]),
+      ].filter(Boolean).join(" ");
+
+      if (companyMatches(identityText, company)) {
+        candidate.score += 35;
+        candidate.evidence.push({ type: "official-site-identity", score: 35, url: page.url });
+        candidate.sourceUrls.add(page.url);
+        candidate.verifiedSite = page;
+      }
+    } catch {
+      // A site may block automated requests. It simply cannot be accepted on
+      // site evidence alone in that case.
+    }
+  }
+}
+
+function pickVerifiedWinner(candidates) {
+  const winner = [...candidates.values()].sort((a, b) => b.score - a.score)[0];
+  const evidenceTypes = new Set(winner?.evidence.map((evidence) => evidence.type) || []);
+  const verified = Boolean(
+    winner?.verifiedSite &&
+    winner.score >= 75 &&
+    evidenceTypes.size >= 2 &&
+    evidenceTypes.has("official-site-identity")
+  );
+  return { winner, verified };
+}
+
 async function resolveCompany({ company, position, fromHeader, body, html }) {
   const candidates = new Map();
   const senderDomain = extractSenderDomain(fromHeader);
@@ -239,67 +317,31 @@ async function resolveCompany({ company, position, fromHeader, body, html }) {
     }
   }
 
-  const queries = [`"${company}" official website`];
-  if (position && !/not specified/i.test(position)) queries.push(`"${company}" "${position}"`);
-  queries.push(`site:linkedin.com/company "${company}"`);
+  const primaryQueries = [`"${company}" official website`];
+  if (position && !/not specified/i.test(position)) primaryQueries.push(`"${company}" "${position}"`);
+  primaryQueries.push(`site:linkedin.com/company "${company}"`);
 
-  const resultGroups = await Promise.all(queries.map((query) => tavilySearch(query, { maxResults: 5 })));
-  const linkedinResults = [];
-  for (let groupIndex = 0; groupIndex < resultGroups.length; groupIndex += 1) {
-    for (let index = 0; index < resultGroups[groupIndex].length; index += 1) {
-      const result = resultGroups[groupIndex][index];
-      const text = `${result.title || ""} ${result.content || ""}`;
-      if (/linkedin\.com\/company\//i.test(result.url || "")) {
-        if (companyMatches(text, company)) linkedinResults.push({ url: result.url, text });
-        continue;
-      }
+  const allLinkedinResults = await searchAndScoreCandidates(candidates, primaryQueries, company);
+  const attempted = new Set();
+  await verifyTopCandidates(candidates, company, attempted);
+  let { winner, verified } = pickVerifiedWinner(candidates);
 
-      const host = hostFromUrl(result.url);
-      if (!host || isBlockedHost(host)) continue;
-      let score = Math.max(8, 25 - index * 4);
-      if (companyMatches(text, company)) score += 15;
-      if (normalize(host).includes(normalize(company))) score += 10;
-      addCandidate(candidates, host, { type: "web-search", score, url: result.url });
-    }
+  // A single round of Tavily queries sometimes isn't enough for smaller or
+  // ambiguous company names. Before giving up, retry with broader phrasings
+  // that tend to surface a careers or LinkedIn-about page even when
+  // "official website" doesn't — only spent when the first pass failed, so
+  // well-known companies never pay for the extra Tavily calls.
+  if (!verified) {
+    const broaderQueries = [
+      `"${company}" careers`,
+      `"${company}" company profile`,
+      `"${company}" linkedin about`,
+    ];
+    const moreLinkedinResults = await searchAndScoreCandidates(candidates, broaderQueries, company);
+    allLinkedinResults.push(...moreLinkedinResults);
+    await verifyTopCandidates(candidates, company, attempted);
+    ({ winner, verified } = pickVerifiedWinner(candidates));
   }
-
-  // LinkedIn is never fetched. A search-result snippet may corroborate an
-  // official domain only when it explicitly displays that domain.
-  for (const result of linkedinResults) {
-    for (const mentionedDomain of extractDomainMentions(result.text)) {
-      addCandidate(candidates, mentionedDomain, { type: "linkedin-search-snippet", score: 25, url: result.url });
-    }
-  }
-
-  const initial = [...candidates.values()].sort((a, b) => b.score - a.score).slice(0, 3);
-  for (const candidate of initial) {
-    try {
-      const page = await fetchPage(`https://${candidate.domain}`);
-      const identityText = [
-        page.title, page.siteName, page.description,
-        ...page.organizations.flatMap((organization) => [organization.name, organization.description]),
-      ].filter(Boolean).join(" ");
-
-      if (companyMatches(identityText, company)) {
-        candidate.score += 35;
-        candidate.evidence.push({ type: "official-site-identity", score: 35, url: page.url });
-        candidate.sourceUrls.add(page.url);
-        candidate.verifiedSite = page;
-      }
-    } catch {
-      // A site may block automated requests. It simply cannot be accepted on
-      // site evidence alone in that case.
-    }
-  }
-
-  const winner = [...candidates.values()].sort((a, b) => b.score - a.score)[0];
-  const evidenceTypes = new Set(winner?.evidence.map((evidence) => evidence.type) || []);
-  const verified = Boolean(
-    winner?.verifiedSite &&
-    winner.score >= 75 &&
-    evidenceTypes.size >= 2 &&
-    evidenceTypes.has("official-site-identity")
-  );
 
   const result = {
     verified,
@@ -307,7 +349,7 @@ async function resolveCompany({ company, position, fromHeader, body, html }) {
     score: winner ? Math.min(100, winner.score) : 0,
     homepage: verified ? winner.verifiedSite : null,
     sourceUrls: verified ? [...winner.sourceUrls] : [],
-    linkedinUrl: linkedinResults[0]?.url || null,
+    linkedinUrl: allLinkedinResults[0]?.url || null,
   };
 
   if (result.verified) {

@@ -170,14 +170,29 @@ export function updateApplicationDescription(waId, company, briefExplanation) {
   return true;
 }
 
+// Mirrors the "verified" bar used before a fresh snapshot is even attempted
+// (server.js's isVerifiedResearch/isApplicationAlreadyVerified) — kept here
+// too, at the point of the actual write, so a row that already has good
+// data can never be regressed to "Not verified" no matter which caller (or
+// future caller) reaches this function.
+function isAlreadyVerified(app) {
+  return (app.research?.confidence || 0) >= 75
+    && Array.isArray(app.research?.sources)
+    && app.research.sources.some((source) => !/linkedin\.com/i.test(source))
+    && Boolean(app.briefExplanation)
+    && !/could not be confidently verified|not verified/i.test(app.briefExplanation);
+}
+
 // Replaces a description only after the evidence-first pipeline has verified
-// the company/domain. All applications at that company share the same company
-// overview, so they are updated together while retaining their own roles and
-// application dates.
+// the company/domain. All applications at that company normally share the
+// same company overview and are updated together while retaining their own
+// roles and application dates — except any row that's already individually
+// verified, which is left untouched rather than being dragged down by a
+// fresh lookup that happens to do worse (e.g. a search-quota outage).
 export function updateApplicationResearch(waId, company, snapshot) {
   const apps = loadApplications();
   const key = normalize(company);
-  const matching = apps.filter((a) => a.waId === waId && normalize(a.company) === key);
+  const matching = apps.filter((a) => a.waId === waId && normalize(a.company) === key && !isAlreadyVerified(a));
   if (matching.length === 0) return 0;
 
   const research = {
