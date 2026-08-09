@@ -971,20 +971,36 @@ async function scanInboxOnce(waId, gmail) {
  * failed). Iterates every onboarded, non-paused user independently, each
  * with their own Gmail client — one user's failure doesn't stop the others.
  */
+// Render's "sleep" is a full process restart, not a real suspend/resume —
+// so a watch that only ever gets (re)registered inside poll()'s 30-minute
+// timer can go a long time without ever actually happening if the process
+// keeps restarting before that timer fires once. Called both at boot (so
+// every wake-up immediately re-establishes push, no waiting required) and
+// inside poll() (so a long-lived, never-sleeping instance still renews
+// before the ~7-day expiration).
+async function ensureWatchesRegistered() {
+  for (const user of getAllUsers()) {
+    if (!user.tokens || user.paused) continue;
+    if (!needsRenewal(user)) continue;
+    try {
+      const gmail = getGmailClient(createUserOAuthClient(user.waId, user.tokens));
+      await startOrRenewWatch(user.waId, gmail);
+    } catch (err) {
+      console.error(`Watch registration error for ${user.waId}:`, err.response?.data || err.message || err);
+    }
+  }
+}
+
 async function poll() {
   if (pollInProgress) return; // previous cycle still running, don't overlap
 
   pollInProgress = true;
   try {
+    await ensureWatchesRegistered();
     for (const user of getAllUsers()) {
       if (!user.tokens || user.paused) continue;
       try {
         const gmail = getGmailClient(createUserOAuthClient(user.waId, user.tokens));
-
-        if (needsRenewal(user)) {
-          await startOrRenewWatch(user.waId, gmail);
-        }
-
         await scanInboxOnce(user.waId, gmail);
       } catch (err) {
         console.error(`Poll error for ${user.waId}:`, err.response?.data || err.message || err);
@@ -1015,6 +1031,11 @@ await restoreAndMerge(
   "users.json",
   (u) => u.waId
 );
+
+// Every process start (including every Render wake-from-sleep — that's a
+// full restart, not a resume) is a chance to make sure push notifications
+// are actually on, without waiting for poll()'s first tick.
+await ensureWatchesRegistered();
 
 setInterval(poll, POLL_INTERVAL_MS);
 
