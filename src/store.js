@@ -83,6 +83,9 @@ export function updateApplicationStatus(waId, company, status, position, eventDa
   const key = normalize(company);
   const positionKey = normalize(position);
   const matching = apps.filter((a) => a.waId === waId && normalize(a.company) === key);
+  // Each application is its own standalone thing — reapplying to the same
+  // company for a different (even similarly-worded) role is intentionally
+  // never merged into an earlier one, so this stays an exact position match.
   const samePosition = positionKey && !/not specified/i.test(position)
     ? matching.filter((a) => normalize(a.position) === positionKey)
     : matching;
@@ -207,6 +210,41 @@ export function updateApplicationResearch(waId, company, snapshot) {
   }
   saveApplications(apps);
   return matching.length;
+}
+
+// A company's identity/description never depends on which position was
+// applied for — so if any application at a company already has verified
+// data, every other application at that SAME company can just reuse it
+// directly, no fresh search needed. Covers cases like a later email (e.g.
+// an interview notice) landing on a differently-worded position, creating
+// a fresh, initially-unverified row for a company that's already known.
+// Returns the number of rows filled in.
+export function fillMissingResearchFromSiblings(waId) {
+  const apps = loadApplications();
+  const byCompany = new Map();
+  for (const app of apps) {
+    if (app.waId !== waId) continue;
+    const key = normalize(app.company);
+    if (!byCompany.has(key)) byCompany.set(key, []);
+    byCompany.get(key).push(app);
+  }
+
+  let filled = 0;
+  for (const group of byCompany.values()) {
+    if (group.length < 2) continue;
+    const source = group.find(isAlreadyVerified);
+    if (!source) continue;
+    for (const app of group) {
+      if (app === source || isAlreadyVerified(app)) continue;
+      app.briefExplanation = source.briefExplanation;
+      app.research = { ...source.research, refreshedAt: new Date().toISOString() };
+      app.lastUpdated = app.research.refreshedAt;
+      filled += 1;
+    }
+  }
+
+  if (filled > 0) saveApplications(apps);
+  return filled;
 }
 
 export function removeApplicationsByCompany(waId, company) {

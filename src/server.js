@@ -8,7 +8,7 @@ import { isJobEmail, hasStrongConfirmationPhrase, looksLikeRejection, looksLikeI
 import { sendWhatsApp, sendWhatsAppTemplate, sendWhatsAppCtaUrl } from "./whatsapp.js";
 import { classifyEmail, extractPositionFromSubject, formatConfirmationMessage } from "./enrich.js";
 import { researchCompanyFromEvidence } from "./companyEvidence.js";
-import { addApplication, findApplication, updateApplicationStatus, updateApplicationStatusByRow, upsertApplicationStatus, updateApplicationDescription, updateApplicationResearch, removeApplicationsByCompany, getAllApplications } from "./store.js";
+import { addApplication, findApplication, updateApplicationStatus, updateApplicationStatusByRow, upsertApplicationStatus, updateApplicationDescription, updateApplicationResearch, fillMissingResearchFromSiblings, removeApplicationsByCompany, getAllApplications } from "./store.js";
 import { getCachedClassification, setCachedClassification } from "./classificationCache.js";
 import { getUser, upsertUser, getAllUsers, getUserByDashboardToken, getUserByEmail } from "./users.js";
 import { startOrRenewWatch, needsRenewal } from "./gmailWatch.js";
@@ -519,6 +519,12 @@ async function refreshDashboardResearch(waId, companyFilter = null) {
   const user = getUser(waId);
   if (!user?.tokens) return;
 
+  // A company's info never depends on which position was applied for, so
+  // this runs first and for free: any row still missing data gets it
+  // straight from an already-verified sibling at the same company before
+  // spending a single search call on it below.
+  const filledFromSiblings = fillMissingResearchFromSiblings(waId);
+
   const applications = getAllApplications(waId);
   const groups = new Map();
   for (const application of applications) {
@@ -534,7 +540,7 @@ async function refreshDashboardResearch(waId, companyFilter = null) {
     finishedAt: null,
     totalCompanies: groups.size,
     processedCompanies: 0,
-    updatedRows: 0,
+    updatedRows: filledFromSiblings,
     skippedCompanies: 0,
     errors: [],
   });
