@@ -42,6 +42,10 @@ export const config = {
     apiKey: process.env.TAVILY_API_KEY,
   },
 
+  serper: {
+    apiKey: process.env.SERPER_API_KEY,
+  },
+
   firecrawl: {
     apiKey: process.env.FIRECRAWL_API_KEY,
   },

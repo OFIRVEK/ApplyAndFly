@@ -3,7 +3,7 @@ import path from "path";
 
 // Persists resolved company -> domain identity across restarts and across
 // repeat applications to the same company, so a company only ever costs
-// Tavily search quota once. Keyed by a normalized company name, mirroring
+// Serper search quota once. Keyed by a normalized company name, mirroring
 // classificationCache.js's persistence pattern.
 const CACHE_FILE = path.resolve(process.cwd(), "companyIdentityCache.json");
 
