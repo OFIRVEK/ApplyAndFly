@@ -134,8 +134,12 @@ export function looksNonEnglish(text = '') {
 // Cheap reject list for obvious marketing/promo emails in non-English scripts,
 // so we don't burn an LLM call (and rate-limit budget) on things like
 // "...| פרסומת" (Hebrew for "advertisement"). Mirrors suggestionPhrases above.
+// Deliberately excludes 'מבצע'/'מבצעים' ("promotion", but also generically
+// "campaign") — a genuine application-confirmation email with a "refer a
+// friend" HR bonus footer (extremely common boilerplate) uses that exact
+// word and was getting silently dropped as if it were retail spam.
 const NON_ENGLISH_PROMO_MARKERS = [
-  'פרסומת', 'מבצע', 'מבצעים', 'הנחה', 'הנחות', 'קופון',
+  'פרסומת', 'הנחה', 'הנחות', 'קופון',
   'إعلان', 'خصم', 'عرض',
 ];
 

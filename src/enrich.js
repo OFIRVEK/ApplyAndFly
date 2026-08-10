@@ -84,14 +84,20 @@ Respond with ONLY valid JSON (no markdown fences, no commentary) in this exact s
   "isRejection": true or false,
   "isInterviewStage": true or false — true for an interview invitation, assessment/task request, or coding challenge (reached the interview stage, not yet an offer),
   "isOffer": true or false — true for an offer letter / offer of employment (the candidate got the job),
-  "company": "the actual hiring company's name (best guess regardless of the other fields)",
+  "company": "the actual hiring company's full name exactly as written in the email (best guess regardless of the other fields) — use the fullest form that appears anywhere in the subject or body, not a shortened or partial version (e.g. 'Armory Defense', not just 'Armory'; 'Check Point Software Technologies', not just 'Check Point')",
   "position": "job title mentioned in the email, or 'Not specified' if unclear",
   "status": "short status phrase, e.g. 'Application received', 'Interview scheduled', 'Not selected', 'Offer extended'",
   "recruiterName": "name of a specific recruiter/contact person mentioned in the email, or null if none is named",
   "location": "job/office location mentioned in the email (city/country), or null if none is stated"
 }`;
 
-  return askGroqForJson(prompt);
+  // llama-3.1-8b-instant's free-tier quota (6,000 TPM) is the tightest in
+  // the app and this is by far the highest-volume Groq call (every matched
+  // email, not just confirmed ones) — llama-3.3-70b-versatile has double
+  // the headroom (12,000 TPM) and no instruction-following/JSON-quality
+  // tradeoff, at the cost of sharing its quota with the company-summary
+  // call in companyEvidence.js, which fires far less often.
+  return askGroqForJson(prompt, "llama-3.3-70b-versatile");
 }
 
 // Deterministic backstop for when the LLM comes back with "Not specified" —
