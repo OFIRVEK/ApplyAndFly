@@ -8,14 +8,19 @@ import { isJobEmail, hasStrongConfirmationPhrase, looksLikeRejection, looksLikeI
 import { sendWhatsApp, sendWhatsAppTemplate, sendWhatsAppCtaUrl } from "./whatsapp.js";
 import { classifyEmail, extractPositionFromSubject, formatConfirmationMessage } from "./enrich.js";
 import { researchCompanyFromEvidence } from "./companyEvidence.js";
-import { addApplication, findApplication, updateApplicationStatus, updateApplicationStatusByRow, upsertApplicationStatus, updateApplicationDescription, updateApplicationResearch, fillMissingResearchFromSiblings, removeApplicationsByCompany, getAllApplications } from "./store.js";
+import { addApplication, findApplication, updateApplicationStatus, updateApplicationStatusByThread, updateApplicationStatusByRow, upsertApplicationStatus, updateApplicationDescription, updateApplicationResearch, fillMissingResearchFromSiblings, removeApplicationsByCompany, getAllApplications } from "./store.js";
 import { getCachedClassification, setCachedClassification } from "./classificationCache.js";
 import { getUser, upsertUser, getAllUsers, getUserByDashboardToken, getUserByEmail } from "./users.js";
 import { startOrRenewWatch, needsRenewal } from "./gmailWatch.js";
 import { restoreAndMerge } from "./backup.js";
+import { OAuth2Client as GoogleIdTokenClient } from "google-auth-library";
 
 const app = express();
-app.use(express.json());
+// Captures the exact raw request bytes alongside the parsed body — needed
+// to verify Meta's X-Hub-Signature-256 header on the WhatsApp webhook,
+// since re-serializing the parsed JSON isn't guaranteed to byte-match what
+// Meta actually signed (key order, whitespace).
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 
 const PORT = process.env.PORT || config.port || 3000;
 
@@ -302,7 +307,26 @@ app.get("/webhook/whatsapp", (req, res) => {
   res.sendStatus(403);
 });
 
+// Verifies Meta actually sent this request — without this, anyone who finds
+// the webhook URL could POST a forged payload claiming to be from any
+// phone number. Only enforced when WHATSAPP_APP_SECRET is configured, so
+// this doesn't break existing behavior for a deploy that hasn't set it yet.
+function isValidWhatsAppSignature(req) {
+  const appSecret = config.whatsapp.appSecret;
+  if (!appSecret) return true;
+  const signatureHeader = req.get("X-Hub-Signature-256");
+  if (!signatureHeader || !req.rawBody) return false;
+  const expected = `sha256=${crypto.createHmac("sha256", appSecret).update(req.rawBody).digest("hex")}`;
+  const a = Buffer.from(signatureHeader);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 app.post("/webhook/whatsapp", (req, res) => {
+  if (!isValidWhatsAppSignature(req)) {
+    console.error("[whatsapp] rejected webhook POST: invalid or missing signature");
+    return res.sendStatus(403);
+  }
   res.sendStatus(200); // ack immediately, Meta expects a fast response
 
   const message = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
@@ -325,7 +349,31 @@ app.post("/webhook/whatsapp", (req, res) => {
  * a sleeping Render instance, and Pub/Sub retries delivery if the first
  * attempt times out mid-wake-up.
  */
-app.post("/webhook/gmail", (req, res) => {
+// Verifies the request actually came from Google Pub/Sub via the OIDC token
+// it attaches when the subscription has authentication enabled — without
+// this, anyone who finds the webhook URL could POST a forged notification
+// claiming to be for any known Gmail address. Only enforced when
+// GMAIL_PUBSUB_AUDIENCE is configured, so this doesn't break a deploy
+// that hasn't set up authenticated push yet (the subscription itself needs
+// a matching service-account configuration on Google's side).
+const pubsubIdTokenClient = new GoogleIdTokenClient();
+async function isValidPubSubRequest(req) {
+  const audience = config.google.pubsubAudience;
+  if (!audience) return true;
+  const authHeader = req.get("Authorization") || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  if (!token) return false;
+  try {
+    await pubsubIdTokenClient.verifyIdToken({ idToken: token, audience });
+    return true;
+  } catch (err) {
+    console.error("[gmail-push] rejected: invalid OIDC token:", err.message || err);
+    return false;
+  }
+}
+
+app.post("/webhook/gmail", async (req, res) => {
+  if (!(await isValidPubSubRequest(req))) return res.sendStatus(403);
   res.sendStatus(200); // ack immediately, Pub/Sub expects a fast response
 
   handleGmailPush(req.body).catch((err) =>
@@ -393,8 +441,32 @@ async function handleGmailPush(body) {
  * entries using an already-authenticated user's Gmail session. Pass
  * ?waId=<phone> to target a specific onboarded user; defaults to the
  * configured owner number. Not meant to stay in the app long-term.
+ *
+ * Previously gated only on the TARGET user having tokens, not on the
+ * CALLER being anyone in particular — meaning anyone who found the URL and
+ * knew (or guessed) a phone number could read that person's Gmail through
+ * these endpoints. Now requires a shared secret (DEBUG_SECRET) as a query
+ * param; if that env var isn't set at all, both routes are disabled
+ * outright rather than left reachable with no way to authenticate.
  */
+function requireDebugSecret(req, res) {
+  const configured = config.debugSecret;
+  const provided = req.query.secret;
+  if (!configured || !provided) {
+    res.status(404).send("Not found");
+    return false;
+  }
+  const a = Buffer.from(String(provided));
+  const b = Buffer.from(String(configured));
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    res.status(404).send("Not found");
+    return false;
+  }
+  return true;
+}
+
 app.get("/debug/search", async (req, res) => {
+  if (!requireDebugSecret(req, res)) return;
   const waId = req.query.waId || config.whatsapp.to;
   const user = getUser(waId);
   if (!user?.tokens) return res.status(401).send("Not authenticated");
@@ -419,6 +491,7 @@ app.get("/debug/search", async (req, res) => {
 });
 
 app.get("/debug/backfill", async (req, res) => {
+  if (!requireDebugSecret(req, res)) return;
   const waId = req.query.waId || config.whatsapp.to;
   const user = getUser(waId);
   if (!user?.tokens) return res.status(401).send("Not authenticated");
@@ -767,6 +840,7 @@ async function processMessageInner(gmail, m, waId) {
     full.payload?.headers?.find((h) => h.name === "From")?.value || "";
   const dateHeader =
     full.payload?.headers?.find((h) => h.name === "Date")?.value || "";
+  const threadId = full.threadId || null;
 
   const text = `${subjectHeader}\n${body}`;
   if (looksLikeIsraeliEmploymentServiceNotice(text, fromHeader)) {
@@ -831,19 +905,34 @@ async function processMessageInner(gmail, m, waId) {
       });
       setCachedClassification(m.id, details);
     } catch (err) {
-      console.error(`[${ts()}] Enrichment error (id=${m.id}):`, err.response?.data || err.message || err);
+      console.error(`[${ts()}] Enrichment error [classify] (id=${m.id}):`, err.response?.data || err.message || err);
       seen.delete(seenKey);
       return;
     }
   }
 
+  // eventType alone routes the email — a new confirmation always sends the
+  // WhatsApp message and gets added to the dashboard, exactly as before;
+  // there's no confidence-based withholding. "uncertain"/"non_job"/
+  // "recommendation" are the classifier's own way of saying this isn't a
+  // job-application-related email at all, so those are skipped regardless.
+  if (details.eventType === "non_job" || details.eventType === "recommendation" || details.eventType === "uncertain") {
+    console.log(`[${ts()}] [poll] id=${m.id} skipped (eventType=${details.eventType})`);
+    return;
+  }
+
   // Rejection/interview/offer emails never go to WhatsApp (that's only for
-  // the initial confirmation), but they DO matter for the dashboard. If this
-  // company is already tracked, just move its status forward. If it isn't
-  // (e.g. the original confirmation scrolled out of the scan window before
-  // we ever saw it), backfill a full row now rather than silently dropping
-  // the signal — better to see it at the wrong stage than not at all.
+  // the initial confirmation), but they DO matter for the dashboard. Thread
+  // continuity is checked first — a status update is very often a reply in
+  // the SAME Gmail thread as the original confirmation, which is a
+  // structural signal from the email system itself, not a guessed text
+  // match — before falling back to company+position matching. If neither
+  // finds this company tracked (e.g. the original confirmation scrolled out
+  // of the scan window before we ever saw it), backfill a full row now
+  // rather than silently dropping the signal — better to see it at the
+  // wrong stage than not at all.
   const updateDashboard = async (status) => {
+    if (updateApplicationStatusByThread(waId, threadId, status)) return true;
     if (updateApplicationStatus(waId, details.company, status, details.position, dateHeader)) return true;
     try {
       const snapshot = await researchCompanyFromEvidence({ company: details.company, position: details.position, fromHeader, body, html: decodeEmailHtml(full) });
@@ -855,6 +944,7 @@ async function processMessageInner(gmail, m, waId) {
         status,
         fallbackDate: dateHeader,
         sourceMessageId: m.id,
+        threadId,
         research: { sources: snapshot.sources || [], confidence: snapshot.confidence || 0 },
       });
       return true;
@@ -865,31 +955,26 @@ async function processMessageInner(gmail, m, waId) {
     }
   };
 
-  if (details.isRejection) {
+  if (details.eventType === "rejection") {
     if (await updateDashboard("Rejected")) {
       console.log(`[${ts()}] [dashboard] id=${m.id} ${details.company} -> Rejected`);
     }
     return;
   }
-  if (details.isInterviewStage) {
+  if (details.eventType === "interview") {
     if (await updateDashboard("In Progress")) {
       console.log(`[${ts()}] [dashboard] id=${m.id} ${details.company} -> In Progress`);
     }
     return;
   }
-  if (details.isOffer) {
+  if (details.eventType === "offer") {
     if (await updateDashboard("Hired")) {
       console.log(`[${ts()}] [dashboard] id=${m.id} ${details.company} -> Hired`);
     }
     return;
   }
 
-  const conflictingSignal = rejectionDetected || interviewStageDetected || offerDetected;
-  if (!details.isApplicationConfirmation && !(strongPhraseDetected && !conflictingSignal)) {
-    console.log(`[${ts()}] [poll] id=${m.id} skipped (not confirmed as an application)`);
-    return;
-  }
-
+  // Only "application_confirmation" reaches here.
   if (!details.position || /not specified/i.test(details.position)) {
     details.position = extractPositionFromSubject(subjectHeader) || details.position;
   }
@@ -915,13 +1000,14 @@ async function processMessageInner(gmail, m, waId) {
       waId,
       company: details.company,
       position: details.position,
+      threadId,
       briefExplanation: snapshot.whatTheyDo,
       appliedDate: dateHeader,
       sourceMessageId: m.id,
       research: { sources: snapshot.sources || [], confidence: snapshot.confidence || 0 },
     });
   } catch (err) {
-    console.error(`[${ts()}] Enrichment error (id=${m.id}):`, err.response?.data || err.message || err);
+    console.error(`[${ts()}] Enrichment error [research] (id=${m.id}):`, err.response?.data || err.message || err);
     seen.delete(seenKey);
     return;
   }

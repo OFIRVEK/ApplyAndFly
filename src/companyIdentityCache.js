@@ -23,13 +23,22 @@ function saveCache(cache) {
   fs.writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2));
 }
 
+// A verified domain doesn't stay trustworthy forever — a company can change
+// domains, get acquired, or a stale entry could just be wrong. Treated as a
+// cache miss once past this age, forcing a fresh Serper-backed resolution
+// rather than trusting it indefinitely.
+const TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
 export function getCachedCompanyIdentity(company) {
   const cache = loadCache();
-  return cache[normalizeKey(company)] || null;
+  const entry = cache[normalizeKey(company)];
+  if (!entry) return null;
+  if (entry.resolvedAt && Date.now() - new Date(entry.resolvedAt).getTime() > TTL_MS) return null;
+  return entry;
 }
 
 export function setCachedCompanyIdentity(company, identity) {
   const cache = loadCache();
-  cache[normalizeKey(company)] = identity;
+  cache[normalizeKey(company)] = { ...identity, resolvedAt: new Date().toISOString() };
   saveCache(cache);
 }

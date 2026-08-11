@@ -4,9 +4,14 @@ import path from "path";
 // load env ONCE, explicitly
 dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 
-console.log("CLIENT_ID:", process.env.GOOGLE_CLIENT_ID);
-console.log("Redirect URI:", process.env.GOOGLE_REDIRECT_URI);
-console.log("ENV TO NUMBER:", process.env.WHATSAPP_TO_NUMBER);
+// Confirms which values loaded without printing the values themselves —
+// the old version logged the actual client ID, redirect URI, and WhatsApp
+// number on every boot, which meant they sat in plain view in Render's logs.
+console.log("Config loaded:", {
+  googleClientId: Boolean(process.env.GOOGLE_CLIENT_ID),
+  googleRedirectUri: Boolean(process.env.GOOGLE_REDIRECT_URI),
+  whatsappToNumber: Boolean(process.env.WHATSAPP_TO_NUMBER),
+});
 
 export const config = {
   port: 3000,
@@ -25,6 +30,12 @@ export const config = {
     // Full Pub/Sub topic name (projects/<project-id>/topics/<topic-name>)
     // used to register Gmail push notifications via users.watch().
     pubsubTopic: process.env.GMAIL_PUBSUB_TOPIC,
+    // Expected "audience" claim on the OIDC token Pub/Sub attaches to push
+    // requests when the subscription is configured with a service account
+    // (Pub/Sub -> subscription -> Enable authentication). Optional: if
+    // unset, /webhook/gmail accepts requests without verifying they
+    // actually came from Google, same as before.
+    pubsubAudience: process.env.GMAIL_PUBSUB_AUDIENCE,
   },
 
   whatsapp: {
@@ -32,6 +43,10 @@ export const config = {
     phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
     to: process.env.WHATSAPP_TO_NUMBER,
     verifyToken: process.env.WHATSAPP_VERIFY_TOKEN,
+    // Meta App Dashboard -> Settings -> Basic -> App Secret. Used to verify
+    // the X-Hub-Signature-256 header on inbound webhook POSTs, so a request
+    // that didn't actually come from Meta can't be processed as if it did.
+    appSecret: process.env.WHATSAPP_APP_SECRET,
   },
 
   groq: {
@@ -49,6 +64,10 @@ export const config = {
   firecrawl: {
     apiKey: process.env.FIRECRAWL_API_KEY,
   },
+
+  // Gates the /debug/* routes — without this set, they're disabled outright
+  // (fail closed) rather than left reachable by anyone who finds the URL.
+  debugSecret: process.env.DEBUG_SECRET,
 
   firebase: {
     // Full JSON key file content for a Firebase service account (Project

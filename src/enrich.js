@@ -35,12 +35,89 @@ export async function askGroqForJson(prompt, model = "llama-3.1-8b-instant") {
   }
 }
 
-// Classifies a scanned email: is it a genuine application confirmation, a
-// rejection, an interview/assessment stage, or an offer? Used both to decide
-// whether to WhatsApp the user (only for a clean confirmation) and to update
-// the dashboard's tracked status for a company already in the table
-// (rejection/interview/offer all matter there, even though none of them get
-// WhatsApp'd).
+// Strict JSON Schema mode (Groq/OpenAI-compatible "structured outputs") —
+// unlike plain json_object mode, the API itself guarantees the required
+// fields and enum values are present and valid, rather than hoping the
+// model's free-text JSON happens to match what the code expects.
+export async function askGroqForSchema(prompt, model, schema) {
+  const res = await axios.post(
+    "https://api.groq.com/openai/v1/chat/completions",
+    {
+      model,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.3,
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: schema.name, strict: true, schema: schema.schema },
+      },
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${config.groq.apiKey}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return JSON.parse(res.data.choices[0].message.content);
+}
+
+// A quote the model claims came from the email is only trustworthy if it
+// genuinely appears there verbatim — this is what turns "the LLM says so"
+// into something the server can actually check, rather than trusting
+// classification results blindly. Whitespace-normalized on both sides
+// since a model will sometimes collapse/expand spacing when quoting.
+function normalizeForQuoteMatch(text = "") {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+export function verifyEvidenceQuotes(quotes, sourceText) {
+  const haystack = normalizeForQuoteMatch(sourceText);
+  const list = Array.isArray(quotes) ? quotes : [];
+  if (list.length === 0) return { verifiedCount: 0, totalCount: 0, allVerified: false };
+  const verifiedCount = list.filter((quote) => haystack.includes(normalizeForQuoteMatch(quote))).length;
+  return { verifiedCount, totalCount: list.length, allVerified: verifiedCount === list.length };
+}
+
+const CLASSIFICATION_SCHEMA = {
+  name: "email_classification",
+  schema: {
+    type: "object",
+    properties: {
+      eventType: {
+        type: "string",
+        enum: ["application_confirmation", "interview", "rejection", "offer", "recommendation", "non_job", "uncertain"],
+        description: "application_confirmation = direct confirmation the recipient's OWN application was received. interview = interview/assessment/coding-challenge invite. rejection = declined. offer = offer of employment. recommendation = a job-suggestion/digest pitching a role, not a confirmation. non_job = not job-related at all. uncertain = genuinely unclear even after reading the whole email.",
+      },
+      company: { type: "string", description: "The hiring company's full name exactly as written in the email, fullest form available (e.g. 'Armory Defense' not 'Armory')." },
+      position: { type: "string", description: "Job title mentioned in the email, or 'Not specified' if neither subject nor body names one." },
+      status: { type: "string", description: "Short status phrase, e.g. 'Application received', 'Interview scheduled', 'Not selected', 'Offer extended'." },
+      recruiterName: { type: ["string", "null"], description: "Name of a specific recruiter/contact person mentioned, or null if none is named." },
+      location: { type: ["string", "null"], description: "Job/office location mentioned (city/country), or null if none is stated." },
+      confidence: { type: "integer", description: "0-100: how confident you are in eventType specifically, not the other fields." },
+      evidenceQuotes: {
+        type: "array",
+        items: { type: "string" },
+        description: "1-3 short quotes copied EXACTLY, verbatim, from the email subject/body that directly support the chosen eventType. Must be actual substrings of the email, not paraphrased or invented.",
+      },
+      recommendedAction: {
+        type: "string",
+        enum: ["create", "update", "ignore", "review"],
+        description: "create = a new confirmation to track. update = a status change on an existing tracked application. ignore = not job-related or not about the recipient's own application. review = plausible but uncertain enough a human should check it.",
+      },
+    },
+    required: ["eventType", "company", "position", "status", "recruiterName", "location", "confidence", "evidenceQuotes", "recommendedAction"],
+    additionalProperties: false,
+  },
+};
+
+// Classifies a scanned email into one eventType (application_confirmation /
+// interview / rejection / offer / recommendation / non_job / uncertain),
+// plus a confidence score and short verbatim evidenceQuotes the caller can
+// independently check against the real email text — turning "the LLM says
+// so" into something verifiable rather than trusted blindly. Used both to
+// decide whether to WhatsApp the user (only for a clean, high-confidence
+// confirmation) and to update the dashboard's tracked status for a company
+// already in the table.
 export async function classifyEmail({ subject, body, fromHeader, strongPhraseDetected, rejectionDetected, interviewStageDetected, offerDetected }) {
   const hintLines = [];
   if (strongPhraseDetected) {
@@ -50,56 +127,53 @@ export async function classifyEmail({ subject, body, fromHeader, strongPhraseDet
   }
   if (rejectionDetected) {
     hintLines.push(
-      `Note: an automated pre-scan found language elsewhere in this email that resembles a rejection/decline (e.g. "moving forward with other candidates", "unfortunately", "will not be proceeding"). This is a strong signal the email is a REJECTION — set isRejection to true in that case, even if the email also opens with a "thank you for applying"-style line.`
+      `Note: an automated pre-scan found language elsewhere in this email that resembles a rejection/decline (e.g. "moving forward with other candidates", "unfortunately", "will not be proceeding"). This is a strong signal eventType should be "rejection", even if the email also opens with a "thank you for applying"-style line.`
     );
   }
   if (interviewStageDetected) {
     hintLines.push(
-      `Note: an automated pre-scan found language suggesting an interview/assessment stage (e.g. scheduling an interview, a coding challenge). This is a strong signal it is NOT the initial confirmation — set isInterviewStage to true in that case.`
+      `Note: an automated pre-scan found language suggesting an interview/assessment stage (e.g. scheduling an interview, a coding challenge). This is a strong signal eventType should be "interview", not "application_confirmation".`
     );
   }
   if (offerDetected) {
     hintLines.push(
-      `Note: an automated pre-scan found language suggesting a job offer (e.g. "pleased to offer", "welcome to the team"). This is a strong signal it is an OFFER — set isOffer to true in that case.`
+      `Note: an automated pre-scan found language suggesting a job offer (e.g. "pleased to offer", "welcome to the team"). This is a strong signal eventType should be "offer".`
     );
   }
   const hintBlock = hintLines.length ? `\n${hintLines.join("\n")}\n` : "";
 
-  const prompt = `You are reading an email a job seeker received. The email may be written in any language (e.g. Hebrew, Arabic, Spanish) — read and understand it regardless of language, but always respond in the English JSON shape below. The email may come from a third-party ATS/recruiting platform (e.g. Greenhouse, Lever, Workday, SmartRecruiters, LinkedIn Easy Apply, Indeed) rather than the hiring company's own domain — do not assume the sender's email domain is the company's website. Regardless of who sent it, identify the actual hiring company the application was submitted to.
+  const prompt = `You are reading an email a job seeker received. The email may be written in any language (e.g. Hebrew, Arabic, Spanish) — read and understand it regardless of language, but always respond in English. The email may come from a third-party ATS/recruiting platform (e.g. Greenhouse, Lever, Workday, SmartRecruiters, LinkedIn Easy Apply, Indeed) rather than the hiring company's own domain — do not assume the sender's email domain is the company's website. Regardless of who sent it, identify the actual hiring company the application was submitted to.
 
 Email subject: ${subject}
 Email sender: ${fromHeader}
 Email body (may be partial):
 ${body.slice(0, 1500)}
 ${hintBlock}
-First decide: is this a direct confirmation that the recipient's OWN job application was received/submitted (e.g. "Thank you for applying", "We received your application", "Your application to X has been submitted")? Read the ENTIRE email before deciding — many rejection/interview/offer emails open with the same "thank you for applying" style line before moving on to their actual content. An opening thank-you does NOT make it a plain confirmation if the email goes on to reject, invite to an interview/assessment, or extend an offer.
+First decide the eventType. "application_confirmation" means a direct confirmation that the recipient's OWN job application was received/submitted (e.g. "Thank you for applying", "We received your application", "Your application to X has been submitted") — read the ENTIRE email before deciding, since many rejection/interview/offer emails open with that exact same style of line before moving on to their actual content. An opening thank-you does NOT make it "application_confirmation" if the email goes on to reject, invite to an interview/assessment, or extend an offer — those are "rejection", "interview", and "offer" respectively.
 
 For the "position" field: check the EMAIL SUBJECT LINE carefully, not just the body — job titles are very often stated there even when the body is generic (e.g. "Thank you for applying for the QA Engineer position at X", "We Got It: Thanks for applying for Flight Test & QA"). Only use "Not specified" if neither the subject nor the body names a role.
 
-Default to false for isApplicationConfirmation. Only answer true if the email confirms the recipient's OWN application was received — not a rejection, not an interview/assessment invite, not an offer, and NOT a job the recipient hasn't applied to yet. Also answer false for: job recommendation/suggestion digests pitching a role the recipient has NOT applied to — these come from job boards, LinkedIn, or recruiting agencies and are phrased as an invitation to apply or a "we found this for you" pitch, in any language (English examples: "jobs you may like", "job alert", "new jobs for you"; a Hebrew example: "חשבנו עליך כשראינו את המשרה הזו" = "we thought of you when we saw this role" — this is a pitch to APPLY, not a confirmation that an application was already submitted). Also answer false for: banking/payment/transaction notifications (even ones with a reference/confirmation number), bills, invoices, receipts, shipping/delivery updates, subscription or account notices, government/insurance correspondence, or anything else not explicitly a clean application-received confirmation. This also includes ANY purchase/booking/reservation confirmation for something other than a job — concert or event tickets, restaurant reservations, flight/hotel bookings, online orders, deliveries, etc. — and ANY membership/loyalty-program/subscription/service sign-up confirmation (e.g. "Welcome to X Membership"), even if it uses the word "application" or "welcome" (a membership application, loan application, or software application is NOT a job application). Such emails can easily contain words that superficially look job-related (e.g. a seat "position", a "job well done" in marketing copy) — that is NOT a job application. Words like "confirmation," "welcome," "application," "position," or the presence of a reference number are NOT enough on their own — the email must be unmistakably confirming that the recipient ALREADY applied, not inviting them to.
+Only use "application_confirmation" if the email confirms the recipient's OWN application was received — not a rejection, not an interview/assessment invite, not an offer, and NOT a job the recipient hasn't applied to yet. Use "recommendation" for job recommendation/suggestion digests pitching a role the recipient has NOT applied to — these come from job boards, LinkedIn, or recruiting agencies and are phrased as an invitation to apply or a "we found this for you" pitch, in any language (English examples: "jobs you may like", "job alert", "new jobs for you"; a Hebrew example: "חשבנו עליך כשראינו את המשרה הזו" = "we thought of you when we saw this role" — this is a pitch to APPLY, not a confirmation that an application was already submitted). Use "non_job" for: banking/payment/transaction notifications (even ones with a reference/confirmation number), bills, invoices, receipts, shipping/delivery updates, subscription or account notices, government/insurance correspondence, or anything else not explicitly a clean application-related email. This also includes ANY purchase/booking/reservation confirmation for something other than a job — concert or event tickets, restaurant reservations, flight/hotel bookings, online orders, deliveries, etc. — and ANY membership/loyalty-program/subscription/service sign-up confirmation (e.g. "Welcome to X Membership"), even if it uses the word "application" or "welcome" (a membership application, loan application, or software application is NOT a job application). Such emails can easily contain words that superficially look job-related (e.g. a seat "position", a "job well done" in marketing copy) — that is NOT a job application. Words like "confirmation," "welcome," "application," "position," or the presence of a reference number are NOT enough on their own — the email must be unmistakably confirming that the recipient ALREADY applied, not inviting them to. Use "uncertain" only if you have genuinely read the whole email and still cannot tell.
 
-Respond with ONLY valid JSON (no markdown fences, no commentary) in this exact shape:
-{
-  "isApplicationConfirmation": true or false,
-  "isRejection": true or false,
-  "isInterviewStage": true or false — true for an interview invitation, assessment/task request, or coding challenge (reached the interview stage, not yet an offer),
-  "isOffer": true or false — true for an offer letter / offer of employment (the candidate got the job),
-  "company": "the actual hiring company's full name exactly as written in the email (best guess regardless of the other fields) — use the fullest form that appears anywhere in the subject or body, not a shortened or partial version (e.g. 'Armory Defense', not just 'Armory'; 'Check Point Software Technologies', not just 'Check Point')",
-  "position": "job title mentioned in the email, or 'Not specified' if unclear",
-  "status": "short status phrase, e.g. 'Application received', 'Interview scheduled', 'Not selected', 'Offer extended'",
-  "recruiterName": "name of a specific recruiter/contact person mentioned in the email, or null if none is named",
-  "location": "job/office location mentioned in the email (city/country), or null if none is stated"
-}`;
+For evidenceQuotes: copy 1-3 SHORT phrases EXACTLY as they appear in the subject or body above — character-for-character, not paraphrased, not translated, not summarized. These will be checked against the actual email text, so an invented or reworded quote will fail verification and this classification will be treated as unreliable regardless of how confident you say you are.
 
-  // This is by far the highest-volume Groq call in the app (every matched
-  // email, not just confirmed ones), so it needs its own separate quota
-  // pool rather than sharing one with the much lower-volume company-summary
-  // call in companyEvidence.js — llama-3.3-70b-versatile briefly did share
-  // that pool and hit its 100,000 tokens/day cap because of it. Both
-  // llama-3.1-8b-instant and llama-3.3-70b-versatile are also Groq-
-  // deprecated (June 2026); gpt-oss-120b is Groq's actively supported
-  // replacement, with a much higher daily budget (200,000 TPD vs 100,000).
-  return askGroqForJson(prompt, "openai/gpt-oss-120b");
+For confidence: 90-100 only when the eventType is unambiguous and directly evidenced by the quotes. Use 50-89 when reasonably confident but there's some ambiguity (e.g. inferred from indirect wording). Use below 50 when genuinely guessing.`;
+
+  const details = await askGroqForSchema(prompt, "openai/gpt-oss-120b", CLASSIFICATION_SCHEMA);
+
+  // Belt-and-suspenders: the model is told what "verbatim" means, but this
+  // is the actual enforcement — quotes that don't check out against the
+  // real subject/body cap how much the rest of the app is allowed to trust
+  // this result, independent of whatever confidence score came back.
+  const { allVerified, verifiedCount, totalCount } = verifyEvidenceQuotes(details.evidenceQuotes, `${subject}\n${body}`);
+  if (!allVerified) {
+    details.confidence = Math.min(details.confidence, 60);
+  }
+  details.evidenceVerified = allVerified;
+  details.evidenceVerifiedCount = verifiedCount;
+  details.evidenceTotalCount = totalCount;
+
+  return details;
 }
 
 // Deterministic backstop for when the LLM comes back with "Not specified" —

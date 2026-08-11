@@ -38,7 +38,7 @@
 </head>
 <body>
   <h1>Privacy Policy — ApplyAndFly</h1>
-  <p class="updated">Last updated: August 7, 2026</p>
+  <p class="updated">Last updated: August 12, 2026</p>
 
   <p>
     ApplyAndFly ("the app") is a personal job-application assistant. It reads
@@ -93,21 +93,21 @@
     <ul>
       <li><strong>Google (Gmail API)</strong> — provides read-only access to your inbox, per your explicit OAuth consent.</li>
       <li><strong>Meta / WhatsApp Business Platform</strong> — delivers and receives WhatsApp messages.</li>
-      <li><strong>Groq</strong> (LLM inference) — receives the text of a candidate email to classify it and to summarize company research; does not receive your Gmail credentials.</li>
-      <li><strong>Tavily</strong> (web search) — receives the company name and job details (not your email content) to find the company's official website and public information.</li>
-      <li><strong>Firecrawl</strong> (web crawling) — reads the verified public website of a company you applied to, to gather accurate company details.</li>
+      <li><strong>Groq</strong> (LLM inference) — receives the text of a candidate email to classify it, and separately receives text already scraped from a company's own verified website to summarize it; does not receive your Gmail credentials.</li>
+      <li><strong>Serper.dev</strong> (web search) — receives only the company name and job title (not your email content) to help locate the company's official website and LinkedIn page.</li>
+      <li><strong>Firebase / Google Cloud Firestore</strong> — stores a backup copy of your application-tracking data and account identifiers, so this information survives routine server maintenance without needing to be re-entered.</li>
     </ul>
   </div>
   <p>
     These services only receive the minimum information needed to perform
-    their specific function (e.g. Tavily and Firecrawl never see your Gmail
-    content; they only see company names and public web addresses).
+    their specific function (e.g. Serper.dev never sees your Gmail content;
+    it only ever sees a company name and job title).
   </p>
 
   <h2 id="data-deletion">Data storage and retention</h2>
   <ul>
-    <li>Application tracking data (company, position, status, dates) is stored on the app's own server and is not shared publicly.</li>
-    <li>Google authentication is kept in memory for the running server process only and is not written to disk; it is cleared whenever the server restarts, requiring you to reconnect.</li>
+    <li>Application tracking data (company, position, status, dates) is stored on the app's own server, backed up to Firestore (see above), and is not shared publicly.</li>
+    <li>Google authentication (OAuth access and refresh tokens) is stored on the app's server and in the Firestore backup so the connection persists across routine server restarts, rather than requiring you to reconnect each time. It is retained until you revoke access (see "Your controls" below) or request deletion.</li>
     <li>
       <strong>To request deletion of your data</strong>, email
       <a href="mailto:ofirvqa@gmail.com">ofirvqa@gmail.com</a> from the

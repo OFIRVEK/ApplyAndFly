@@ -56,7 +56,7 @@ export function findApplication(waId, company, position, sourceMessageId, applie
 // Adds a new tracked application at "Applied" status. Gmail message IDs make
 // restart scans idempotent without treating one company as a single row:
 // separate roles/applications at the same company are intentionally retained.
-export function addApplication({ waId, company, position, briefExplanation, appliedDate, sourceMessageId, research }) {
+export function addApplication({ waId, company, position, briefExplanation, appliedDate, sourceMessageId, threadId, research }) {
   const apps = loadApplications();
   if (sourceMessageId && apps.some((a) => a.waId === waId && a.sourceMessageId === sourceMessageId)) return false;
 
@@ -69,8 +69,29 @@ export function addApplication({ waId, company, position, briefExplanation, appl
     appliedDate: resolveDate(appliedDate),
     lastUpdated: new Date().toISOString(),
     ...(sourceMessageId ? { sourceMessageId } : {}),
+    ...(threadId ? { threadId } : {}),
     ...(research ? { research } : {}),
   });
+  saveApplications(apps);
+  return true;
+}
+
+// A rejection/interview/offer email is very often a reply within the SAME
+// Gmail thread as the original confirmation — that's a structural signal
+// from the email system itself, not a guessed text match, so it's checked
+// before any company/position heuristic. Only ever succeeds for a thread
+// that was actually recorded (i.e. every row created from here on), so it
+// naturally falls through to the older matching logic for anything tracked
+// before this existed, or for ATS platforms that start a fresh thread per
+// stage.
+export function updateApplicationStatusByThread(waId, threadId, status) {
+  if (!threadId) return false;
+  const apps = loadApplications();
+  const app = apps.find((a) => a.waId === waId && a.threadId === threadId);
+  if (!app) return false;
+
+  app.status = status;
+  app.lastUpdated = new Date().toISOString();
   saveApplications(apps);
   return true;
 }
@@ -129,7 +150,7 @@ export function updateApplicationStatusByRow({ waId, company, position, appliedD
 // any other reason). Rather than silently dropping the signal, this backs
 // the row in directly at the target status instead of "Applied" — losing
 // the true apply date, but at least surfacing it on the dashboard.
-export function upsertApplicationStatus({ waId, company, position, briefExplanation, status, fallbackDate, sourceMessageId, research }) {
+export function upsertApplicationStatus({ waId, company, position, briefExplanation, status, fallbackDate, sourceMessageId, threadId, research }) {
   const apps = loadApplications();
   const key = normalize(company);
   const positionKey = normalize(position);
@@ -152,6 +173,7 @@ export function upsertApplicationStatus({ waId, company, position, briefExplanat
     appliedDate: resolveDate(fallbackDate),
     lastUpdated: new Date().toISOString(),
     ...(sourceMessageId ? { sourceMessageId } : {}),
+    ...(threadId ? { threadId } : {}),
     ...(research ? { research } : {}),
   });
   saveApplications(apps);
