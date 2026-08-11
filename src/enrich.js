@@ -91,13 +91,15 @@ Respond with ONLY valid JSON (no markdown fences, no commentary) in this exact s
   "location": "job/office location mentioned in the email (city/country), or null if none is stated"
 }`;
 
-  // llama-3.1-8b-instant's free-tier quota (6,000 TPM) is the tightest in
-  // the app and this is by far the highest-volume Groq call (every matched
-  // email, not just confirmed ones) — llama-3.3-70b-versatile has double
-  // the headroom (12,000 TPM) and no instruction-following/JSON-quality
-  // tradeoff, at the cost of sharing its quota with the company-summary
-  // call in companyEvidence.js, which fires far less often.
-  return askGroqForJson(prompt, "llama-3.3-70b-versatile");
+  // This is by far the highest-volume Groq call in the app (every matched
+  // email, not just confirmed ones), so it needs its own separate quota
+  // pool rather than sharing one with the much lower-volume company-summary
+  // call in companyEvidence.js — llama-3.3-70b-versatile briefly did share
+  // that pool and hit its 100,000 tokens/day cap because of it. Both
+  // llama-3.1-8b-instant and llama-3.3-70b-versatile are also Groq-
+  // deprecated (June 2026); gpt-oss-120b is Groq's actively supported
+  // replacement, with a much higher daily budget (200,000 TPD vs 100,000).
+  return askGroqForJson(prompt, "openai/gpt-oss-120b");
 }
 
 // Deterministic backstop for when the LLM comes back with "Not specified" —
