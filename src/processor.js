@@ -166,10 +166,14 @@ export function looksNonJobTransactional(text = '') {
 // just "didn't match a known-bad category". A blocklist alone means every
 // new non-job category (receipts, deliveries, newsletters, ...) needs its
 // own reactive patch; this closes that gap by default instead of per-case.
+// Includes both the free-standing and construct-state ("smichut") forms of
+// each word — Hebrew grammar changes a word's ending (e.g. משרה -> משרת)
+// when it's directly followed by another noun ("משרת QA" = "QA position"),
+// which is extremely common phrasing and was silently missed without this.
 const JOB_RELATED_NON_ENGLISH_KEYWORDS = [
   // Hebrew: application / position / interview / recruiting / resume
-  'מועמדות', 'משרה', 'משרות', 'ראיון', 'ראיונות', 'קורות חיים',
-  'גיוס', 'מגייס', 'מגייסת', 'מכרז', 'דרושים', 'דרוש', 'התפקיד', 'מיון מועמדים',
+  'מועמדות', 'משרה', 'משרת', 'משרות', 'ראיון', 'ראיונות', 'קורות חיים',
+  'גיוס', 'מגייס', 'מגייסת', 'מכרז', 'דרושים', 'דרוש', 'תפקיד', 'מיון מועמדים',
 ];
 
 export function looksJobRelatedNonEnglish(text = '') {
