@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { backupObjectFile } from "./backup.js";
 
 // Separate from `seen` on purpose: `seen` intentionally resets on every
 // restart (so a restart re-scans the full window during testing), but that
@@ -19,6 +20,7 @@ function loadCache() {
 
 function saveCache(cache) {
   fs.writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2));
+  backupObjectFile(CACHE_FILE, "classificationCache.json");
 }
 
 export function getCachedClassification(messageId) {

@@ -12,7 +12,7 @@ import { addApplication, findApplication, updateApplicationStatus, updateApplica
 import { getCachedClassification, setCachedClassification } from "./classificationCache.js";
 import { getUser, upsertUser, getAllUsers, getUserByDashboardToken, getUserByEmail } from "./users.js";
 import { startOrRenewWatch, needsRenewal } from "./gmailWatch.js";
-import { restoreAndMerge } from "./backup.js";
+import { restoreAndMerge, restoreAndMergeObject } from "./backup.js";
 import { OAuth2Client as GoogleIdTokenClient } from "google-auth-library";
 
 const app = express();
@@ -1122,6 +1122,19 @@ await restoreAndMerge(
   path.resolve(process.cwd(), "users.json"),
   "users.json",
   (u) => u.waId
+);
+// classificationCache.json/companyIdentityCache.json: same "must survive a
+// redeploy" reasoning as applications.json/users.json above — without this,
+// every redeploy wiped local disk and the next scan re-burned real LLM/Serper
+// quota re-classifying/re-resolving things that were already handled before
+// the redeploy killed the process.
+await restoreAndMergeObject(
+  path.resolve(process.cwd(), "classificationCache.json"),
+  "classificationCache.json"
+);
+await restoreAndMergeObject(
+  path.resolve(process.cwd(), "companyIdentityCache.json"),
+  "companyIdentityCache.json"
 );
 
 /**

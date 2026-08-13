@@ -93,3 +93,62 @@ export function backupFile(localPath, remoteObjectName) {
     updatedAt: FieldValue.serverTimestamp(),
   }).catch((err) => console.error(`[backup] failed to upload ${remoteObjectName}:`, err.message || err));
 }
+
+// Object-keyed counterparts of restoreAndMerge/backupFile, for caches keyed
+// by ID (Gmail message ID, normalized company name) rather than an
+// array-of-records with an idFn — classificationCache.json and
+// companyIdentityCache.json. Without this, every redeploy wiped these
+// caches (local disk is ephemeral on Render), and the next scan re-burned
+// real LLM/Serper quota re-classifying/re-resolving emails and companies
+// that were already handled before the redeploy. Same local-wins-on-conflict
+// merge semantics as restoreAndMerge, via object spread instead of a Map.
+function readLocalObject(localPath) {
+  try {
+    return JSON.parse(fs.readFileSync(localPath, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+async function downloadRemoteObject(db, docId) {
+  try {
+    const snap = await db.collection("backups").doc(docId).get();
+    if (!snap.exists) return {};
+    return snap.data().records || {};
+  } catch (err) {
+    console.error(`[backup] failed to download ${docId}:`, err.message || err);
+    return {};
+  }
+}
+
+export async function restoreAndMergeObject(localPath, remoteObjectName) {
+  const db = getFirestore();
+  if (!db) {
+    console.log(`[backup] Firebase not configured, skipping restore for ${remoteObjectName}`);
+    return;
+  }
+
+  const local = readLocalObject(localPath);
+  const remote = await downloadRemoteObject(db, remoteObjectName);
+  const localCount = Object.keys(local).length;
+  const remoteCount = Object.keys(remote).length;
+  if (remoteCount === 0 && localCount === 0) {
+    console.log(`[backup] nothing to restore for ${remoteObjectName} yet (both local and Firestore are empty)`);
+    return;
+  }
+
+  const merged = { ...remote, ...local };
+  fs.writeFileSync(localPath, JSON.stringify(merged, null, 2));
+  console.log(`[backup] restored ${remoteObjectName}: ${localCount} local + ${remoteCount} remote -> ${Object.keys(merged).length} merged`);
+}
+
+export function backupObjectFile(localPath, remoteObjectName) {
+  const db = getFirestore();
+  if (!db) return;
+
+  const records = readLocalObject(localPath);
+  db.collection("backups").doc(remoteObjectName).set({
+    records,
+    updatedAt: FieldValue.serverTimestamp(),
+  }).catch((err) => console.error(`[backup] failed to upload ${remoteObjectName}:`, err.message || err));
+}

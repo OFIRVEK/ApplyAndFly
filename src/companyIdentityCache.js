@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { backupObjectFile } from "./backup.js";
 
 // Persists resolved company -> domain identity across restarts and across
 // repeat applications to the same company, so a company only ever costs
@@ -21,6 +22,7 @@ function loadCache() {
 
 function saveCache(cache) {
   fs.writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2));
+  backupObjectFile(CACHE_FILE, "companyIdentityCache.json");
 }
 
 // A verified domain doesn't stay trustworthy forever — a company can change
