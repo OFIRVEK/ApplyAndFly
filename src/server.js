@@ -215,8 +215,11 @@ function sendStatusPage(res, message) {
  * STEP 1: start OAuth
  */
 app.get("/auth/google", (req, res) => {
+  // Deliberately doesn't log the generated URL — it carries the CSRF state
+  // token in plain text, and Render's logs shouldn't hold that even though
+  // it's already single-use and short-lived.
   const url = getAuthUrl(createOAuthState());
-  console.log("Redirecting to Google OAuth:", url);
+  console.log("Redirecting to Google OAuth");
   res.redirect(url);
 });
 
