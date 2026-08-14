@@ -1,5 +1,6 @@
 import axios from "axios";
 import { config } from "./config.js";
+import { assertPublicHostname, MAX_PAGE_BYTES, isTextContentType } from "./netGuard.js";
 
 function stripCodeFences(text) {
   return text.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
@@ -307,11 +308,30 @@ function stripHtmlToText(html) {
     .trim();
 }
 
-async function fetchPageText(url) {
-  const { data: html } = await axios.get(url, {
+async function fetchPageText(url, redirectsLeft = 3) {
+  // Same SSRF guard + size/content-type limits as companyEvidence.js's
+  // fetchPage — the domains fetched here also come from email content
+  // (sender domain, body links), which is attacker-controllable, and this
+  // path previously had no such protection at all. Redirects are followed
+  // manually so every hop's hostname gets re-validated (a public host
+  // 301-ing to a private address would otherwise bypass the guard), while
+  // still supporting the extremely common apex -> www redirect.
+  await assertPublicHostname(new URL(url).hostname);
+  const response = await axios.get(url, {
     timeout: 3500,
+    maxRedirects: 0,
+    maxContentLength: MAX_PAGE_BYTES,
+    maxBodyLength: MAX_PAGE_BYTES,
+    responseType: "text",
+    validateStatus: (status) => status >= 200 && status < 400,
     headers: { "User-Agent": "Mozilla/5.0 (compatible; ApplyAndFlyBot/1.0)" },
   });
+  if (response.status >= 300 && response.headers.location) {
+    if (redirectsLeft <= 0) return "";
+    return fetchPageText(new URL(response.headers.location, url).toString(), redirectsLeft - 1);
+  }
+  if (!isTextContentType(response.headers["content-type"])) return "";
+  const html = typeof response.data === "string" ? response.data : "";
 
   const descMatch = html.match(
     /<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i

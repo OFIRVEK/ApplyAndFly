@@ -36,6 +36,11 @@ export const config = {
     // unset, /webhook/gmail accepts requests without verifying they
     // actually came from Google, same as before.
     pubsubAudience: process.env.GMAIL_PUBSUB_AUDIENCE,
+    // The exact service account configured on the Pub/Sub push subscription
+    // (Enable authentication -> Service account). When set, push requests
+    // must carry a token minted AS this identity, not merely one with the
+    // right audience — any GCP account can mint a token for any audience.
+    pubsubServiceAccount: process.env.GMAIL_PUBSUB_SERVICE_ACCOUNT,
   },
 
   whatsapp: {

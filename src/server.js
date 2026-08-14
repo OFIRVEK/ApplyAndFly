@@ -35,6 +35,19 @@ const dashboardApp = express();
 const DASHBOARD_PORT = process.env.DASHBOARD_PORT || 2000;
 
 dashboardApp.use(express.json());
+// The dashboard token travels in the URL path, so make sure browsers never
+// hand that URL to third parties (Referrer-Policy) and never cache the
+// token-bearing pages/API responses to shared disk (Cache-Control on the
+// token-carrying routes only — static pages like the homepage stay
+// cacheable).
+dashboardApp.use((req, res, next) => {
+  res.set("Referrer-Policy", "no-referrer");
+  res.set("X-Content-Type-Options", "nosniff");
+  if (req.path.startsWith("/dashboard/") || req.path.startsWith("/api/")) {
+    res.set("Cache-Control", "no-store");
+  }
+  next();
+});
 dashboardApp.use(express.static(path.resolve(process.cwd(), "public")));
 
 function resolveDashboardUser(req) {
@@ -316,7 +329,14 @@ app.get("/webhook/whatsapp", (req, res) => {
 // this doesn't break existing behavior for a deploy that hasn't set it yet.
 function isValidWhatsAppSignature(req) {
   const appSecret = config.whatsapp.appSecret;
-  if (!appSecret) return true;
+  // Fail closed: without the secret there is no way to tell Meta's real
+  // webhook calls from forgeries, so reject everything rather than accept
+  // everything (which is what this did before — one accidentally deleted
+  // env var would have silently turned authentication off).
+  if (!appSecret) {
+    console.error("[whatsapp] WHATSAPP_APP_SECRET is not set — rejecting webhook POST (fail closed)");
+    return false;
+  }
   const signatureHeader = req.get("X-Hub-Signature-256");
   if (!signatureHeader || !req.rawBody) return false;
   const expected = `sha256=${crypto.createHmac("sha256", appSecret).update(req.rawBody).digest("hex")}`;
@@ -365,12 +385,30 @@ app.post("/webhook/whatsapp", (req, res) => {
 const pubsubIdTokenClient = new GoogleIdTokenClient();
 async function isValidPubSubRequest(req) {
   const audience = config.google.pubsubAudience;
-  if (!audience) return true;
+  // Fail closed, same reasoning as the WhatsApp signature check above.
+  if (!audience) {
+    console.error("[gmail-push] GMAIL_PUBSUB_AUDIENCE is not set — rejecting push request (fail closed)");
+    return false;
+  }
   const authHeader = req.get("Authorization") || "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
   if (!token) return false;
   try {
-    await pubsubIdTokenClient.verifyIdToken({ idToken: token, audience });
+    const ticket = await pubsubIdTokenClient.verifyIdToken({ idToken: token, audience });
+    // Audience alone isn't proof the request came from OUR subscription —
+    // anyone with any Google Cloud service account can mint a Google-signed
+    // token for an arbitrary audience string. Pinning the token's identity
+    // to the exact service account configured on the subscription closes
+    // that: only tokens minted AS that account pass.
+    const expectedServiceAccount = config.google.pubsubServiceAccount;
+    if (expectedServiceAccount) {
+      const payload = ticket.getPayload();
+      const email = (payload?.email || "").toLowerCase();
+      if (!payload?.email_verified || email !== expectedServiceAccount.toLowerCase()) {
+        console.error(`[gmail-push] rejected: token from unexpected identity "${email || "(none)"}"`);
+        return false;
+      }
+    }
     return true;
   } catch (err) {
     console.error("[gmail-push] rejected: invalid OIDC token:", err.message || err);

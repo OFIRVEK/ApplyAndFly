@@ -1,7 +1,6 @@
 import axios from "axios";
-import dns from "dns";
-import net from "net";
 import { askGroqForJson, extractSenderDomain, isAtsOrGenericDomain } from "./enrich.js";
+import { assertPublicHostname, MAX_PAGE_BYTES, isTextContentType } from "./netGuard.js";
 import { serperSearch } from "./serper.js";
 import { getCachedCompanyIdentity, setCachedCompanyIdentity } from "./companyIdentityCache.js";
 
@@ -154,59 +153,8 @@ function extractInternalLinks(html, pageUrl, expectedRoot) {
   return [...new Map(links.map((link) => [link.url, link])).values()].slice(0, 2);
 }
 
-// SSRF guard: every domain fetchPage() touches ultimately traces back to
-// content in an email (sender domain, a link in the body/HTML) — attacker
-// -controllable. Without this, a crafted email pointing "our website" at
-// e.g. 169.254.169.254 (a cloud metadata endpoint) or localhost would make
-// THIS SERVER fetch it. Blocks private/loopback/link-local/reserved
-// ranges for both IPv4 and IPv6, checked against every resolved address
-// (a hostname can resolve to more than one, so all must be public) and
-// re-checked on every redirect hop, not just the initial URL.
-const PRIVATE_IPV4_BLOCKS = [
-  ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8],
-  ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.0.0.0", 24], ["192.168.0.0", 16],
-  ["198.18.0.0", 15], ["224.0.0.0", 4], ["240.0.0.0", 4],
-];
-
-function ipv4ToInt(ip) {
-  const parts = ip.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((p) => Number.isNaN(p) || p < 0 || p > 255)) return null;
-  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
-}
-
-function isPrivateIpv4(ip) {
-  const intIp = ipv4ToInt(ip);
-  if (intIp === null) return true; // malformed — treat as unsafe rather than guess
-  return PRIVATE_IPV4_BLOCKS.some(([base, bits]) => {
-    const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
-    return (intIp & mask) === (ipv4ToInt(base) & mask);
-  });
-}
-
-function isPrivateIpv6(ip) {
-  const lower = ip.toLowerCase();
-  if (lower === "::1" || lower === "::") return true;
-  if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // fc00::/7 unique local
-  if (/^fe[89ab]/.test(lower)) return true; // fe80::/10 link-local
-  const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (mapped) return isPrivateIpv4(mapped[1]);
-  return false;
-}
-
-async function assertPublicHostname(hostname) {
-  const literalFamily = net.isIP(hostname);
-  const addresses = literalFamily
-    ? [{ address: hostname, family: literalFamily }]
-    : await dns.promises.lookup(hostname, { all: true });
-
-  for (const { address, family } of addresses) {
-    const isPrivate = family === 6 ? isPrivateIpv6(address) : isPrivateIpv4(address);
-    if (isPrivate) {
-      throw new Error(`refusing to fetch private/reserved address ${address} for host "${hostname}"`);
-    }
-  }
-}
-
+// SSRF guard lives in netGuard.js (shared with enrich.js's website-blurb
+// fetcher); redirects are still re-validated per hop here.
 async function fetchPage(url, redirectsLeft = 4) {
   const hostname = new URL(url).hostname;
   await assertPublicHostname(hostname);
@@ -214,6 +162,8 @@ async function fetchPage(url, redirectsLeft = 4) {
   const response = await axios.get(url, {
     timeout: 8000,
     maxRedirects: 0, // handled manually below so every hop gets re-validated
+    maxContentLength: MAX_PAGE_BYTES,
+    maxBodyLength: MAX_PAGE_BYTES,
     headers: { "User-Agent": "Mozilla/5.0 (compatible; ApplyAndFly/1.0; company research)" },
     responseType: "text",
     validateStatus: (status) => status >= 200 && status < 400,
@@ -223,6 +173,12 @@ async function fetchPage(url, redirectsLeft = 4) {
     if (redirectsLeft <= 0) throw new Error(`too many redirects fetching ${url}`);
     const nextUrl = new URL(response.headers.location, url).toString();
     return fetchPage(nextUrl, redirectsLeft - 1);
+  }
+
+  // Only text is ever parsed below — a binary response (PDF, zip, video)
+  // would just be garbage input, so don't even try.
+  if (!isTextContentType(response.headers["content-type"])) {
+    throw new Error(`non-text content-type fetching ${url}`);
   }
 
   const html = typeof response.data === "string" ? response.data : "";
