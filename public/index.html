@@ -44,13 +44,33 @@
 
   <h2>Purpose of app use</h2>
   <p>
-    ApplyAndFly watches your Gmail inbox for job-application confirmations,
-    rejections, interview invitations, and offers, then keeps you updated
-    over WhatsApp — no manual tracking spreadsheet needed. When a new
-    application confirmation comes in, it automatically researches the
+    <strong>ApplyAndFly exists for one purpose: to automatically track your own
+    job applications.</strong> It watches your Gmail inbox for job-application
+    confirmations, rejections, interview invitations, and offers, then keeps
+    you updated over WhatsApp — no manual tracking spreadsheet needed. When a
+    new application confirmation comes in, it automatically researches the
     hiring company and sends you a short, verified summary along with a
     link to your personal dashboard, where every application you've made
     is tracked in one place.
+  </p>
+
+  <h2>How this app uses Google user data</h2>
+  <p>
+    ApplyAndFly uses the <strong>Gmail API</strong> with the read-only scope
+    (<code>gmail.readonly</code>), granted by you through Google's consent
+    screen. Specifically, it:
+  </p>
+  <ul>
+    <li><strong>Reads</strong> the subject, sender, date, and body of messages in your inbox — solely to identify emails related to your own job applications (confirmations, rejections, interview invitations, offers).</li>
+    <li><strong>Never</strong> sends, modifies, labels, forwards, or deletes any email, and never accesses attachments.</li>
+    <li>Uses what it finds only to build <strong>your own</strong> application dashboard and WhatsApp notifications — your data is never shown to anyone else, never used for advertising, and never sold.</li>
+    <li>You can revoke access at any time from your <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google Account security settings</a>.</li>
+  </ul>
+  <p>
+    ApplyAndFly's use of information received from Google APIs adheres to the
+    <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Google
+    API Services User Data Policy</a>, including the Limited Use requirements.
+    Full details are in the <a href="/privacy.html">Privacy Policy</a>.
   </p>
 
   <h2>What it does</h2>
