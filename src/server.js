@@ -338,7 +338,10 @@ app.post("/webhook/whatsapp", (req, res) => {
   const waId = message.from;
   const text = message.text?.body?.trim() || "";
 
-  console.log(`[whatsapp] inbound from ${waId}: "${text}"`);
+  // Content deliberately not logged — users type whatever they want at the
+  // bot, and message text in Render's logs would be readable by the
+  // operator. Length + masked number is enough to trace webhook activity.
+  console.log(`[whatsapp] inbound from ***${String(waId).slice(-4)} (${text.length} chars)`);
 
   handleIncomingWhatsAppMessage(waId, text).catch((err) =>
     console.error("Webhook handling error:", err)
@@ -859,8 +862,15 @@ async function processMessageInner(gmail, m, waId) {
     !looksPromotional(text) &&
     !looksNonJobTransactional(text);
 
+  // Deliberately does NOT log the subject line — this line fires for EVERY
+  // scanned email (bank notices, personal mail, everything in the window),
+  // so logging subjects would put users' raw inbox content in Render's logs
+  // for the operator to see. The Gmail message ID is enough to investigate
+  // a specific email's handling: the mailbox owner can look it up, the
+  // operator alone can't. waId is masked to its last 4 digits for the same
+  // reason (it's a full phone number).
   console.log(
-    `[${ts()}] [poll] id=${m.id} waId=${waId} subject="${subjectHeader}" matched=${matched} nonEnglishCandidate=${nonEnglishCandidate}`
+    `[${ts()}] [poll] id=${m.id} waId=***${String(waId).slice(-4)} matched=${matched} nonEnglishCandidate=${nonEnglishCandidate}`
   );
 
   if (!matched && !nonEnglishCandidate) return;
