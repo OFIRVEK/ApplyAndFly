@@ -311,13 +311,18 @@
 
   function filterValue(application, column) {
     const value = application[column];
+    // Dates filter at day granularity, shown exactly as the table shows them
+    // — raw ISO timestamps made every row its own useless filter entry.
+    if (column === "appliedDate") return formatDate(value);
     return value === undefined || value === null || value === "" ? "Not specified" : String(value);
   }
 
   function valuesForColumn(column) {
-    return [...new Set(allApplications.map(application => filterValue(application, column)))].sort((a, b) =>
-      a.localeCompare(b, undefined, { sensitivity: "base" })
-    );
+    const values = [...new Set(allApplications.map(application => filterValue(application, column)))];
+    if (column === "appliedDate") {
+      return values.sort((a, b) => (new Date(a).getTime() || 0) - (new Date(b).getTime() || 0));
+    }
+    return values.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   }
 
   function filteredApplications() {
@@ -330,8 +335,10 @@
     let left = filterValue(a, sortColumn);
     let right = filterValue(b, sortColumn);
     if (sortColumn === "appliedDate") {
-      left = new Date(left).getTime() || 0;
-      right = new Date(right).getTime() || 0;
+      // Sort on the raw timestamp, not the day-granularity display value,
+      // so same-day applications keep their true chronological order.
+      left = new Date(a.appliedDate).getTime() || 0;
+      right = new Date(b.appliedDate).getTime() || 0;
     }
     const comparison = typeof left === "number"
       ? left - right
@@ -339,9 +346,23 @@
     return sortDirection === "asc" ? comparison : -comparison;
   }
 
+  const COLUMN_LABELS = {
+    company: "Company",
+    position: "Position",
+    appliedDate: "Applied",
+    status: "Status",
+    briefExplanation: "What they do",
+  };
+
   function updateFilterButtons() {
     document.querySelectorAll(".filter-button").forEach(button => {
-      button.classList.toggle("is-active", activeFilters.has(button.dataset.filter));
+      const column = button.dataset.filter;
+      button.classList.toggle("is-active", activeFilters.has(column));
+      // Header label doubles as the sort indicator so the active sort is
+      // always visible without opening a menu.
+      const label = button.parentElement.querySelector("span");
+      label.textContent = COLUMN_LABELS[column]
+        + (sortColumn === column ? (sortDirection === "asc" ? " ↑" : " ↓") : "");
     });
   }
 
@@ -397,7 +418,7 @@
           <input type="checkbox" class="filter-value" value="${encodeURIComponent(value)}" ${pendingFilterValues.has(value) ? "checked" : ""}>
           <span title="${escapeAttribute(value)}">${escapeHtml(value)}</span>
         </label>`).join("")}</div>
-      <div class="filter-actions"><button type="button" class="filter-action clear">Clear</button><button type="button" class="filter-action apply">Apply</button></div>`;
+      <div class="filter-actions"><button type="button" class="filter-action clear">Clear filter</button><button type="button" class="filter-action apply">Apply</button></div>`;
     // Must be visible (and its real content in place) before measuring —
     // an unrendered `display:none` element reports a zero height.
     menu.classList.add("open");
@@ -453,9 +474,13 @@
     }
 
     if (apps.length === 0) {
-      table.style.display = "none";
-      emptyState.textContent = "No applications match the selected filters.";
-      emptyState.style.display = "block";
+      // Keep the table (and its header row with the filter buttons!) visible
+      // — hiding the whole table left no way to reach the filter menus and
+      // undo the very filters that emptied the view.
+      table.style.display = "table";
+      emptyState.style.display = "none";
+      tbody.innerHTML = `<tr><td colspan="5" class="empty">No applications match the selected filters.
+        <button type="button" id="clear-all-filters" style="border:0;background:transparent;color:var(--accent);cursor:pointer;font:inherit;text-decoration:underline;padding:0;">Clear all filters</button></td></tr>`;
       updateFilterButtons();
       return;
     }
@@ -543,9 +568,20 @@
     });
   });
 
+  document.getElementById("table-body").addEventListener("click", event => {
+    if (!event.target.matches("#clear-all-filters")) return;
+    activeFilters.clear();
+    loadDashboard();
+  });
+
   document.getElementById("filter-menu").addEventListener("change", event => {
     if (event.target.matches(".filter-all")) {
-      document.querySelectorAll(".filter-value").forEach(input => { input.checked = event.target.checked; });
+      // Only toggles the options currently visible, so "Select all" while a
+      // search query is active means "select all matches", not everything.
+      document.querySelectorAll(".filter-option[data-filter-value]").forEach(option => {
+        if (option.style.display === "none") return;
+        option.querySelector(".filter-value").checked = event.target.checked;
+      });
       return;
     }
     if (event.target.matches(".filter-value")) {
@@ -564,13 +600,20 @@
       return;
     }
     if (event.target.matches(".clear")) {
-      document.querySelectorAll(".filter-value").forEach(input => { input.checked = false; });
-      document.querySelector(".filter-all").checked = false;
+      // "Clear" removes this column's filter entirely (like Excel's "Clear
+      // Filter From...") — the old uncheck-everything behavior, followed by
+      // Apply, filtered out every row instead of resetting.
+      activeFilters.delete(openFilterColumn);
+      closeFilterMenu();
+      loadDashboard();
       return;
     }
     if (!event.target.matches(".apply")) return;
     const values = valuesForColumn(openFilterColumn);
     const selected = new Set([...document.querySelectorAll(".filter-value:checked")].map(input => decodeURIComponent(input.value)));
+    // Nothing checked would filter out every single row — treat it as a
+    // mis-click and keep the menu open instead of emptying the dashboard.
+    if (selected.size === 0) return;
     if (selected.size === values.length) activeFilters.delete(openFilterColumn);
     else activeFilters.set(openFilterColumn, selected);
     closeFilterMenu();
