@@ -110,6 +110,18 @@ const CLASSIFICATION_SCHEMA = {
   },
 };
 
+// Rejection/interview/offer pivots very often come AFTER a long thank-you
+// preamble (logo alt text, greeting, "thanks for applying to X" paragraph)
+// — a head-only slice can cut the email off before the sentence that
+// actually decides its type, leaving the LLM a pure thank-you email that it
+// honestly classifies as a confirmation (a real Cyera rejection was
+// misclassified exactly this way). Long emails therefore keep their TAIL
+// too, where the decision language and sign-off live.
+function excerptForClassification(body = "") {
+  if (body.length <= 3500) return body;
+  return `${body.slice(0, 2500)}\n[... middle of a long email omitted ...]\n${body.slice(-1000)}`;
+}
+
 // Classifies a scanned email into one eventType (application_confirmation /
 // interview / rejection / offer / recommendation / non_job / uncertain),
 // plus a confidence score and short verbatim evidenceQuotes the caller can
@@ -147,7 +159,7 @@ export async function classifyEmail({ subject, body, fromHeader, strongPhraseDet
 Email subject: ${subject}
 Email sender: ${fromHeader}
 Email body (may be partial):
-${body.slice(0, 1500)}
+${excerptForClassification(body)}
 ${hintBlock}
 First decide the eventType. "application_confirmation" means a direct confirmation that the recipient's OWN job application was received/submitted (e.g. "Thank you for applying", "We received your application", "Your application to X has been submitted") — read the ENTIRE email before deciding, since many rejection/interview/offer emails open with that exact same style of line before moving on to their actual content. An opening thank-you does NOT make it "application_confirmation" if the email goes on to reject, invite to an interview/assessment, or extend an offer — those are "rejection", "interview", and "offer" respectively.
 

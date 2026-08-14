@@ -79,6 +79,19 @@ const REJECTION_PHRASES = [
   'position has been filled',
   'we will not be able to move forward',
   'unfortunately', 'regret to inform',
+  // These only feed a hint to the LLM classifier (they never hard-route the
+  // email by themselves), so leaning broad is low-risk — a false positive
+  // just makes the LLM read more carefully.
+  'not to move forward', 'decided to pursue other candidates',
+  'pursue other candidates', 'other candidates at this time',
+  'no longer under consideration', 'not been selected', 'not selected for',
+  'keep your resume on file', 'keep your cv on file',
+  'wish you success in your job search', 'wish you the best of luck',
+  'best of luck in your job search', 'future opportunities',
+  // Hebrew: "decided to proceed with other candidates" / "not to continue
+  // the process" phrasings common from Israeli companies
+  'מועמדים אחרים', 'לא להמשיך בתהליך', 'החלטנו שלא להמשיך',
+  'לא נמשיך בתהליך',
 ];
 
 export function looksLikeRejection(text = '') {

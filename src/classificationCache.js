@@ -25,7 +25,14 @@ function saveCache(cache) {
 
 export function getCachedClassification(messageId) {
   const cache = loadCache();
-  return cache[messageId] || null;
+  const entry = cache[messageId] || null;
+  // Entries written before the eventType schema (old shape:
+  // isApplicationConfirmation/isRejection booleans) have no eventType, and
+  // the routing in server.js would fall through every eventType check
+  // straight into the confirmation path — turning an old cached REJECTION
+  // into a fresh "application received" WhatsApp send. Treat them as cache
+  // misses so they get re-classified under the current schema instead.
+  return entry && entry.eventType ? entry : null;
 }
 
 export function setCachedClassification(messageId, details) {
