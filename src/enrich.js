@@ -11,6 +11,16 @@ function repairJson(text) {
   return text.replace(/,(\s*[}\]])/g, "$1");
 }
 
+// Numbers only, never content — makes each call's real cost against Groq's
+// per-model daily budget visible in the logs, instead of estimating from
+// prompt-size arithmetic.
+function logTokenUsage(model, usage) {
+  if (!usage) return;
+  console.log(
+    `[groq-usage] model=${model} prompt=${usage.prompt_tokens} completion=${usage.completion_tokens} total=${usage.total_tokens}`
+  );
+}
+
 export async function askGroqForJson(prompt, model = "llama-3.1-8b-instant") {
   const res = await axios.post(
     "https://api.groq.com/openai/v1/chat/completions",
@@ -27,6 +37,7 @@ export async function askGroqForJson(prompt, model = "llama-3.1-8b-instant") {
       },
     }
   );
+  logTokenUsage(model, res.data.usage);
   const cleaned = stripCodeFences(res.data.choices[0].message.content);
   try {
     return JSON.parse(cleaned);
@@ -58,6 +69,7 @@ export async function askGroqForSchema(prompt, model, schema) {
       },
     }
   );
+  logTokenUsage(model, res.data.usage);
   return JSON.parse(res.data.choices[0].message.content);
 }
 
