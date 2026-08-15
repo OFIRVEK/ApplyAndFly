@@ -1,4 +1,5 @@
 import express from "express";
+import axios from "axios";
 import path from "path";
 import crypto from "crypto";
 import { config } from "./config.js";
@@ -1207,3 +1208,22 @@ app.listen(PORT, () => {
 
 poll().catch((err) => console.error("Initial poll failed:", err.response?.data || err.message || err));
 setInterval(poll, POLL_INTERVAL_MS);
+
+/**
+ * KEEP-ALIVE — Render's free tier spins the service down after ~15 minutes
+ * without inbound HTTP, and the wake-up is a 30-60s cold start that hits
+ * whoever opens the dashboard next (plus it delays Gmail push handling
+ * until Pub/Sub's retry lands). Pinging our own public URL every 10
+ * minutes keeps traffic flowing through Render's edge so it never sleeps.
+ * The free tier's 750 instance-hours/month covers one service running
+ * 24/7 (max 744h in a month), so staying awake costs nothing. Only active
+ * when PUBLIC_APP_URL is set — locally there's nothing to keep awake.
+ */
+const KEEP_ALIVE_INTERVAL_MS = 10 * 60 * 1000;
+if (config.app.publicUrl) {
+  setInterval(() => {
+    axios.get(config.app.publicUrl, { timeout: 20000 })
+      .catch((err) => console.error("[keep-alive] self-ping failed:", err.message || err));
+  }, KEEP_ALIVE_INTERVAL_MS);
+  console.log(`[keep-alive] self-ping every ${KEEP_ALIVE_INTERVAL_MS / 60000} minutes -> ${config.app.publicUrl}`);
+}
