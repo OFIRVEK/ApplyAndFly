@@ -610,7 +610,15 @@
     }
     if (!event.target.matches(".apply")) return;
     const values = valuesForColumn(openFilterColumn);
-    const selected = new Set([...document.querySelectorAll(".filter-value:checked")].map(input => decodeURIComponent(input.value)));
+    // Only VISIBLE checked options count — every option starts checked when
+    // the menu opens, so with a search query active the hidden non-matches
+    // are still checked; counting them made "search for one company, Apply"
+    // compute as "everything selected -> remove the filter", i.e. nothing
+    // visibly happened. Excel's filter search works on visible matches only,
+    // and now so does this.
+    const selected = new Set([...document.querySelectorAll(".filter-option[data-filter-value]")]
+      .filter(option => option.style.display !== "none" && option.querySelector(".filter-value").checked)
+      .map(option => decodeURIComponent(option.querySelector(".filter-value").value)));
     // Nothing checked would filter out every single row — treat it as a
     // mis-click and keep the menu open instead of emptying the dashboard.
     if (selected.size === 0) return;
