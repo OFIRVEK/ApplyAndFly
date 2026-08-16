@@ -13,7 +13,7 @@ import { addApplication, findApplication, updateApplicationStatus, updateApplica
 import { getCachedClassification, setCachedClassification } from "./classificationCache.js";
 import { getUser, upsertUser, getAllUsers, getUserByDashboardToken, getUserByEmail } from "./users.js";
 import { startOrRenewWatch, needsRenewal } from "./gmailWatch.js";
-import { restoreAndMerge, restoreAndMergeObject } from "./backup.js";
+import { restoreAndMerge, restoreAndMergeObject, flushPendingBackups } from "./backup.js";
 import { OAuth2Client as GoogleIdTokenClient } from "google-auth-library";
 
 const app = express();
@@ -1227,3 +1227,24 @@ if (config.app.publicUrl) {
   }, KEEP_ALIVE_INTERVAL_MS);
   console.log(`[keep-alive] self-ping every ${KEEP_ALIVE_INTERVAL_MS / 60000} minutes -> ${config.app.publicUrl}`);
 }
+
+/**
+ * GRACEFUL SHUTDOWN — Render sends SIGTERM (with a grace period) before
+ * killing the old instance on every redeploy. Firestore backups fire
+ * fire-and-forget (see backup.js) so a write finishing locally doesn't
+ * block the request that triggered it — but that same fire-and-forget
+ * behavior meant a redeploy could kill the process while a backup was
+ * still in flight: the local write had already landed, Render then wipes
+ * local disk on every redeploy, and if the Firestore copy never finished,
+ * that row was gone from both places. Traced to real application rows
+ * disappearing from the dashboard after a run of several same-evening
+ * redeploys. Waiting for flushPendingBackups() here closes that window —
+ * the process no longer exits with a write still in the air.
+ */
+async function shutdown(signal) {
+  console.log(`[shutdown] ${signal} received, flushing pending backups before exit...`);
+  await flushPendingBackups();
+  process.exit(0);
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

@@ -23,6 +23,40 @@ import { config } from "./config.js";
 // undefined (reading 'cert')" at startup.
 let firestore = null;
 
+// Tracks every in-flight Firestore write so a graceful shutdown (see
+// flushPendingBackups below) can wait for them instead of the process
+// exiting mid-write. Without this, backupFile/backupObjectFile being
+// fire-and-forget meant a redeploy's SIGTERM could kill the process while a
+// write was still in flight — the local write had already succeeded, but
+// its Firestore copy never landed, and since Render wipes local disk on
+// every redeploy, that row/entry was gone from BOTH places on next boot.
+// Traced to real data loss: an application count that quietly shrank over
+// a single evening of several redeploys.
+const pendingBackups = new Set();
+
+function trackBackup(promise) {
+  pendingBackups.add(promise);
+  const clear = () => pendingBackups.delete(promise);
+  promise.then(clear, clear);
+  return promise;
+}
+
+// Awaited from the SIGTERM/SIGINT handler in server.js before the process
+// exits. Bounded by a timeout — Render's own grace period before SIGKILL
+// isn't unlimited, and a hung Firestore call shouldn't hang shutdown
+// forever when it would otherwise still lose the race either way.
+export async function flushPendingBackups(timeoutMs = 8000) {
+  if (pendingBackups.size === 0) return;
+  console.log(`[backup] flushing ${pendingBackups.size} pending write(s) before shutdown...`);
+  const timeout = new Promise((resolve) => setTimeout(resolve, timeoutMs));
+  await Promise.race([Promise.allSettled([...pendingBackups]), timeout]);
+  if (pendingBackups.size > 0) {
+    console.error(`[backup] shutdown timeout hit with ${pendingBackups.size} write(s) still pending`);
+  } else {
+    console.log("[backup] all pending writes flushed");
+  }
+}
+
 function getFirestore() {
   if (!config.firebase.serviceAccountKey) return null;
   if (!firestore) {
@@ -80,18 +114,22 @@ export async function restoreAndMerge(localPath, remoteObjectName, idFn) {
   console.log(`[backup] restored ${remoteObjectName}: ${local.length} local + ${remote.length} remote -> ${merged.size} merged`);
 }
 
-// Fire-and-forget — not awaited by callers, so store.js/users.js keep their
-// existing synchronous save functions unchanged. A failed backup logs but
+// Fire-and-forget from the CALLER's perspective — not awaited by
+// store.js/users.js, so their synchronous save functions stay unchanged.
+// The write itself is still tracked (see trackBackup) so a shutdown can
+// wait for it even though the caller doesn't. A failed backup logs but
 // never affects the local write that already succeeded.
 export function backupFile(localPath, remoteObjectName) {
   const db = getFirestore();
   if (!db) return;
 
   const records = readLocalJson(localPath);
-  db.collection("backups").doc(remoteObjectName).set({
-    records,
-    updatedAt: FieldValue.serverTimestamp(),
-  }).catch((err) => console.error(`[backup] failed to upload ${remoteObjectName}:`, err.message || err));
+  trackBackup(
+    db.collection("backups").doc(remoteObjectName).set({
+      records,
+      updatedAt: FieldValue.serverTimestamp(),
+    }).catch((err) => console.error(`[backup] failed to upload ${remoteObjectName}:`, err.message || err))
+  );
 }
 
 // Object-keyed counterparts of restoreAndMerge/backupFile, for caches keyed
@@ -147,8 +185,10 @@ export function backupObjectFile(localPath, remoteObjectName) {
   if (!db) return;
 
   const records = readLocalObject(localPath);
-  db.collection("backups").doc(remoteObjectName).set({
-    records,
-    updatedAt: FieldValue.serverTimestamp(),
-  }).catch((err) => console.error(`[backup] failed to upload ${remoteObjectName}:`, err.message || err));
+  trackBackup(
+    db.collection("backups").doc(remoteObjectName).set({
+      records,
+      updatedAt: FieldValue.serverTimestamp(),
+    }).catch((err) => console.error(`[backup] failed to upload ${remoteObjectName}:`, err.message || err))
+  );
 }
