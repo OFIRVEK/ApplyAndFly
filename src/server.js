@@ -3,17 +3,19 @@ import axios from "axios";
 import path from "path";
 import crypto from "crypto";
 import { config } from "./config.js";
-import { oauth2Client, getAuthUrl, createUserOAuthClient } from "./auth.js";
+import { oauth2Client, getAuthUrl, createUserOAuthClient, revokeUserTokens } from "./auth.js";
 import { getGmailClient, listEmails, listEmailsByFolder, getEmail, decodeEmail, decodeEmailHtml } from "./gmail.js";
 import { isJobEmail, hasStrongConfirmationPhrase, looksLikeRejection, looksLikeInterviewStage, looksLikeOffer, looksNonEnglish, looksJobRelatedNonEnglish, looksPromotional, looksNonJobTransactional, looksLikePayment, looksLikeJobSuggestion, looksLikeAccountNotice, looksLikeIsraeliEmploymentServiceNotice } from "./processor.js";
 import { sendWhatsApp, sendWhatsAppTemplate, sendWhatsAppCtaUrl } from "./whatsapp.js";
 import { classifyEmail, extractPositionFromSubject, formatConfirmationMessage } from "./enrich.js";
 import { researchCompanyFromEvidence } from "./companyEvidence.js";
-import { addApplication, findApplication, updateApplicationStatus, updateApplicationStatusByThread, updateApplicationStatusByRow, upsertApplicationStatus, updateApplicationDescription, updateApplicationResearch, fillMissingResearchFromSiblings, removeApplicationsByCompany, getAllApplications } from "./store.js";
+import { addApplication, findApplication, updateApplicationStatus, updateApplicationStatusByThread, updateApplicationStatusByRow, upsertApplicationStatus, updateApplicationDescription, updateApplicationResearch, fillMissingResearchFromSiblings, removeApplicationsByCompany, getAllApplications, getApplicationsForGeneration, tagUntaggedApplications } from "./store.js";
 import { getCachedClassification, setCachedClassification } from "./classificationCache.js";
 import { getUser, upsertUser, getAllUsers, getUserByDashboardToken, getUserByEmail } from "./users.js";
 import { startOrRenewWatch, needsRenewal } from "./gmailWatch.js";
 import { restoreAndMerge, restoreAndMergeObject, flushPendingBackups } from "./backup.js";
+import { recordActiveUser, recordInactiveUser } from "./userDirectory.js";
+import { sendAdminNotification } from "./email.js";
 import { OAuth2Client as GoogleIdTokenClient } from "google-auth-library";
 
 const app = express();
@@ -51,9 +53,13 @@ dashboardApp.use((req, res, next) => {
 });
 dashboardApp.use(express.static(path.resolve(process.cwd(), "public")));
 
+// Returns the user PLUS the exact raw token that resolved them (current or
+// historical — see getUserByDashboardToken) so callers can tell which
+// dashboard "generation" is actually being viewed, not just who owns it.
 function resolveDashboardUser(req) {
   const token = req.get("X-Dashboard-Token") || req.query.token;
-  return getUserByDashboardToken(token);
+  const user = getUserByDashboardToken(token);
+  return user ? { ...user, requestedToken: token } : null;
 }
 
 dashboardApp.get("/dashboard/:token", (req, res) => {
@@ -65,12 +71,20 @@ dashboardApp.get("/dashboard/:token", (req, res) => {
 dashboardApp.get("/api/applications", (req, res) => {
   const user = resolveDashboardUser(req);
   if (!user) return res.status(401).json({ error: "Invalid dashboard token" });
-  res.json(getAllApplications(user.waId));
+  // isCurrentDashboard=false means this token is a frozen, historical link
+  // (from before an unsubscribe) — scoped strictly to that generation's own
+  // rows rather than everything the waId has ever had. See
+  // getApplicationsForGeneration in store.js.
+  const applications = getApplicationsForGeneration(user.waId, user.requestedToken, user.isCurrentDashboard);
+  res.json({ isCurrentDashboard: user.isCurrentDashboard, applications });
 });
 
 dashboardApp.patch("/api/applications/status", (req, res) => {
   const user = resolveDashboardUser(req);
   if (!user) return res.status(401).json({ error: "Invalid dashboard token" });
+  if (!user.isCurrentDashboard) {
+    return res.status(403).json({ error: "This dashboard is no longer active and is read-only." });
+  }
 
   const { company, position, appliedDate, sourceMessageId, status } = req.body || {};
   const validStatuses = new Set(["Applied", "In Progress", "Rejected", "Hired"]);
@@ -719,6 +733,9 @@ async function refreshDashboardResearch(waId, companyFilter = null) {
 dashboardApp.post("/api/applications/refresh", (req, res) => {
   const user = resolveDashboardUser(req);
   if (!user) return res.status(401).json({ error: "Invalid dashboard token" });
+  if (!user.isCurrentDashboard) {
+    return res.status(403).json({ error: "This dashboard is no longer active and is read-only." });
+  }
   if (!user.tokens) return res.status(401).json({ error: "Reconnect Gmail first" });
   if (getRefreshJob(user.waId).running) return res.status(409).json(getRefreshJob(user.waId));
 
@@ -733,6 +750,80 @@ dashboardApp.get("/api/applications/refresh-status", (req, res) => {
   const user = resolveDashboardUser(req);
   if (!user) return res.status(401).json({ error: "Invalid dashboard token" });
   res.json(getRefreshJob(user.waId));
+});
+
+/**
+ * UNSUBSCRIBE — user-initiated offboarding from the dashboard. Gated by the
+ * same X-Dashboard-Token every other dashboard route uses (no separate
+ * link/token system needed) and only reachable on the CURRENT dashboard —
+ * an already-frozen historical link naturally can't trigger this twice,
+ * since its token stops resolving as "current" the moment the first
+ * unsubscribe completes.
+ *
+ * Order matters below: stop the Gmail watch and revoke the OAuth grant
+ * BEFORE clearing local tokens (both API calls need the still-valid
+ * tokens), and both are best-effort — a stale/already-expired token
+ * shouldn't block the rest of unsubscribing, since the user's intent to
+ * leave is clear either way.
+ */
+dashboardApp.post("/api/unsubscribe", async (req, res) => {
+  const user = resolveDashboardUser(req);
+  if (!user) return res.status(401).json({ error: "Invalid dashboard token" });
+  if (!user.isCurrentDashboard) {
+    return res.status(403).json({ error: "This dashboard is already inactive." });
+  }
+
+  if (user.tokens) {
+    try {
+      const gmail = getGmailClient(createUserOAuthClient(user.waId, user.tokens));
+      await gmail.users.stop({ userId: "me" });
+    } catch (err) {
+      console.error(`[unsubscribe] failed to stop Gmail watch for ${user.waId}:`, err.response?.data || err.message || err);
+    }
+    await revokeUserTokens(user.tokens);
+  }
+
+  const previousDashboardTokens = [
+    ...(user.previousDashboardTokens || []),
+    { token: user.dashboardToken, deactivatedAt: new Date().toISOString() },
+  ];
+
+  upsertUser(user.waId, {
+    status: "inactive",
+    tokens: null,
+    historyId: null,
+    watchExpiration: null,
+    dashboardToken: null,
+    previousDashboardTokens,
+  });
+  sessions.delete(user.waId);
+
+  const updatedUser = getUser(user.waId);
+  await recordInactiveUser(updatedUser);
+
+  await sendAdminNotification(
+    "ApplyAndFly: a user unsubscribed",
+    [
+      `WhatsApp: ${user.waId}`,
+      `Gmail: ${user.emailAddress || "(not captured)"}`,
+      `Onboarded: ${user.onboardedAt || "unknown"}`,
+      `Unsubscribed: ${new Date().toISOString()}`,
+    ].join("\n")
+  );
+
+  // Best-effort courtesy — the dashboard page itself is the primary
+  // confirmation surface, so this isn't queued/retried if the 24h WhatsApp
+  // window happens to be closed (sendWhatsApp already swallows its own
+  // errors rather than throwing).
+  const oldDashboardUrl = config.app.publicUrl
+    ? `${config.app.publicUrl}/dashboard/${user.dashboardToken}`
+    : null;
+  await sendWhatsApp(
+    `✅ Unsubscribed. ApplyAndFly has stopped watching your Gmail and revoked its access.\n\nYour old dashboard is still available to view (read-only)${oldDashboardUrl ? ` at:\n${oldDashboardUrl}` : "."}\n\nYou're welcome to come back at any time! Just message me again — you'll sign in with Google, and a fresh dashboard will start tracking from scratch.`,
+    user.waId
+  );
+
+  res.json({ unsubscribed: true, oldDashboardUrl });
 });
 
 /**
@@ -806,7 +897,12 @@ async function handleIncomingWhatsAppMessage(waId, text) {
     // get created once the scans finished, so every historical-application
     // notification during onboarding shipped with no dashboard link at all.
     const dashboardToken = crypto.randomBytes(24).toString("hex");
-    upsertUser(waId, { folder, dashboardToken });
+    // status: "active" covers both a first-time subscribe AND a resubscribe
+    // after a prior unsubscribe (same code path either way) — the fresh
+    // dashboardToken here is what makes the new dashboard start empty
+    // instead of inheriting the old (now-frozen) subscription's history.
+    upsertUser(waId, { folder, dashboardToken, status: "active" });
+    recordActiveUser(getUser(waId)).catch((err) => console.error("[userDirectory] recordActiveUser failed:", err));
 
     // Backfill existing applications before switching to "watch for new
     // ones" mode — the dashboard should start populated, not empty. The
@@ -998,6 +1094,7 @@ async function processMessageInner(gmail, m, waId) {
         sourceMessageId: m.id,
         threadId,
         research: { sources: snapshot.sources || [], confidence: snapshot.confidence || 0 },
+        dashboardGeneration: getUser(waId)?.dashboardToken,
       });
       return true;
     } catch (err) {
@@ -1057,6 +1154,7 @@ async function processMessageInner(gmail, m, waId) {
       appliedDate: dateHeader,
       sourceMessageId: m.id,
       research: { sources: snapshot.sources || [], confidence: snapshot.confidence || 0 },
+      dashboardGeneration: user?.dashboardToken,
     });
   } catch (err) {
     console.error(`[${ts()}] Enrichment error [research] (id=${m.id}):`, err.response?.data || err.message || err);
@@ -1188,6 +1286,30 @@ await restoreAndMergeObject(
   path.resolve(process.cwd(), "companyIdentityCache.json"),
   "companyIdentityCache.json"
 );
+
+/**
+ * ONE-TIME MIGRATION — tags every pre-existing application row with
+ * whichever dashboard generation is current for its owner RIGHT NOW,
+ * before any unsubscribe/resubscribe can happen. Without this, a
+ * resubscribe's brand-new dashboard would inherit every untagged legacy
+ * row instead of starting empty, and the frozen old dashboard would show
+ * none of them — exactly backwards from the intended behavior. Must run
+ * after users.json/applications.json are restored above (needs each
+ * user's real current dashboardToken) and before the server accepts
+ * traffic. Idempotent — a row tagged on a prior boot is never touched
+ * again, so this is a cheap no-op on every boot after the first.
+ */
+(function backfillLegacyDashboardGeneration() {
+  let totalTagged = 0;
+  for (const user of getAllUsers()) {
+    const generationToken = user.dashboardToken || (user.previousDashboardTokens || []).slice(-1)[0]?.token;
+    if (!generationToken) continue;
+    totalTagged += tagUntaggedApplications(user.waId, generationToken);
+  }
+  if (totalTagged > 0) {
+    console.log(`[migration] backfilled dashboardGeneration on ${totalTagged} legacy application row(s)`);
+  }
+})();
 
 /**
  * START SERVER — before the initial poll, not after. A redeploy killing a

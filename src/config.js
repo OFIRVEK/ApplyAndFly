@@ -82,4 +82,16 @@ export const config = {
     // read directly from this key, so no separate env var is needed.
     serviceAccountKey: process.env.FIREBASE_SERVICE_ACCOUNT_KEY,
   },
+
+  resend: {
+    // Transactional-email API key (resend.com). Used solely to notify the
+    // operator by email when a user unsubscribes. Unset = email.js no-ops
+    // (logs only), same graceful-degradation pattern as every other
+    // optional integration in this app.
+    apiKey: process.env.RESEND_API_KEY,
+  },
+
+  // Where the unsubscribe notification email is sent. Configurable via env
+  // so this isn't hardcoded, but defaults to the operator's own address.
+  adminNotifyEmail: process.env.ADMIN_NOTIFY_EMAIL || "ofirvqa@gmail.com",
 };

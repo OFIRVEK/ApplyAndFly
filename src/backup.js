@@ -57,7 +57,12 @@ export async function flushPendingBackups(timeoutMs = 8000) {
   }
 }
 
-function getFirestore() {
+// Exported so other modules that need direct Firestore access for their own
+// document shapes (userDirectory.js's activeUsers/inactiveUsers
+// collections, which don't fit the generic "one document holds a whole
+// JSON blob" pattern the rest of this file uses) can reuse the same lazily
+// -initialized client instead of duplicating the credential/init logic.
+export function getFirestore() {
   if (!config.firebase.serviceAccountKey) return null;
   if (!firestore) {
     const credentials = JSON.parse(config.firebase.serviceAccountKey);

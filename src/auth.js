@@ -39,3 +39,28 @@ export function createUserOAuthClient(waId, tokens) {
   });
   return client;
 }
+
+// Unsubscribe flow: tells Google to invalidate this grant entirely (both
+// access and refresh token) rather than just deleting our own local copy —
+// without this, the app would stop USING the tokens but Google would still
+// consider the grant active, so the tokens would keep silently working if
+// they ever leaked or were somehow retained elsewhere. Best-effort: a token
+// already expired/revoked makes Google's endpoint error, which shouldn't
+// block the rest of the unsubscribe flow (local revocation already
+// happened by the time this is called — tokens are being cleared either
+// way), so this only logs on failure rather than throwing.
+export async function revokeUserTokens(tokens) {
+  if (!tokens?.access_token && !tokens?.refresh_token) return;
+  const client = new google.auth.OAuth2(
+    config.google.clientId,
+    config.google.clientSecret,
+    config.google.redirectUri
+  );
+  client.setCredentials(tokens);
+  try {
+    await client.revokeCredentials();
+    console.log("[auth] Google token grant revoked");
+  } catch (err) {
+    console.error("[auth] failed to revoke Google tokens (continuing anyway):", err.response?.data || err.message || err);
+  }
+}

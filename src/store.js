@@ -56,7 +56,7 @@ export function findApplication(waId, company, position, sourceMessageId, applie
 // Adds a new tracked application at "Applied" status. Gmail message IDs make
 // restart scans idempotent without treating one company as a single row:
 // separate roles/applications at the same company are intentionally retained.
-export function addApplication({ waId, company, position, briefExplanation, appliedDate, sourceMessageId, threadId, research }) {
+export function addApplication({ waId, company, position, briefExplanation, appliedDate, sourceMessageId, threadId, research, dashboardGeneration }) {
   const apps = loadApplications();
   if (sourceMessageId && apps.some((a) => a.waId === waId && a.sourceMessageId === sourceMessageId)) return false;
 
@@ -71,6 +71,13 @@ export function addApplication({ waId, company, position, briefExplanation, appl
     ...(sourceMessageId ? { sourceMessageId } : {}),
     ...(threadId ? { threadId } : {}),
     ...(research ? { research } : {}),
+    // Which dashboardToken was "current" when this row was created — lets a
+    // frozen (post-unsubscribe) dashboard show exactly what belonged to
+    // that subscription, while a fresh resubscribe's dashboard starts
+    // empty instead of inheriting old history. Omitted (undefined) if the
+    // caller doesn't pass one — see getApplicationsForGeneration for how
+    // untagged legacy rows (created before this existed) are handled.
+    ...(dashboardGeneration ? { dashboardGeneration } : {}),
   });
   saveApplications(apps);
   return true;
@@ -150,7 +157,7 @@ export function updateApplicationStatusByRow({ waId, company, position, appliedD
 // any other reason). Rather than silently dropping the signal, this backs
 // the row in directly at the target status instead of "Applied" — losing
 // the true apply date, but at least surfacing it on the dashboard.
-export function upsertApplicationStatus({ waId, company, position, briefExplanation, status, fallbackDate, sourceMessageId, threadId, research }) {
+export function upsertApplicationStatus({ waId, company, position, briefExplanation, status, fallbackDate, sourceMessageId, threadId, research, dashboardGeneration }) {
   const apps = loadApplications();
   const key = normalize(company);
   const positionKey = normalize(position);
@@ -175,6 +182,7 @@ export function upsertApplicationStatus({ waId, company, position, briefExplanat
     ...(sourceMessageId ? { sourceMessageId } : {}),
     ...(threadId ? { threadId } : {}),
     ...(research ? { research } : {}),
+    ...(dashboardGeneration ? { dashboardGeneration } : {}),
   });
   saveApplications(apps);
 }
@@ -280,4 +288,43 @@ export function removeApplicationsByCompany(waId, company) {
 
 export function getAllApplications(waId) {
   return loadApplications().filter((a) => a.waId === waId);
+}
+
+// Scopes a dashboard's view to one subscription "generation" — see
+// dashboardGeneration in addApplication/upsertApplicationStatus above.
+// isCurrent=true (the live, current dashboard) also includes untagged rows
+// (created before this feature existed, or by any future caller that
+// doesn't pass a generation) so nothing already on an active dashboard
+// silently disappears. isCurrent=false (a historical/frozen link reached
+// via a previousDashboardTokens entry) is strict — only rows explicitly
+// tagged with that exact generation, so a frozen dashboard shows precisely
+// what belonged to it and never picks up untagged/ambiguous rows.
+export function getApplicationsForGeneration(waId, generationToken, isCurrent) {
+  const apps = loadApplications().filter((a) => a.waId === waId);
+  if (isCurrent) {
+    return apps.filter((a) => !a.dashboardGeneration || a.dashboardGeneration === generationToken);
+  }
+  return apps.filter((a) => a.dashboardGeneration === generationToken);
+}
+
+// One-time migration, run once at boot (see server.js) — tags every
+// pre-existing untagged row with the generation token that's current RIGHT
+// NOW, closing a real gap: without this, a resubscribe's brand-new
+// dashboard would inherit ALL untagged legacy rows (since untagged reads
+// as "belongs to current" — see getApplicationsForGeneration above), and
+// the frozen old dashboard would show NONE of them (since they don't match
+// the archived token either) — exactly backwards from "old dashboard keeps
+// its history, new one starts empty." Idempotent: once a row is tagged it
+// stays tagged, so repeat boots after the first are a no-op per user.
+export function tagUntaggedApplications(waId, generationToken) {
+  const apps = loadApplications();
+  let tagged = 0;
+  for (const app of apps) {
+    if (app.waId === waId && !app.dashboardGeneration) {
+      app.dashboardGeneration = generationToken;
+      tagged += 1;
+    }
+  }
+  if (tagged > 0) saveApplications(apps);
+  return tagged;
 }
