@@ -242,6 +242,13 @@
     font-size: 13px;
     margin-bottom: 20px;
   }
+  .footer-actions {
+    display: flex;
+    justify-content: center;
+    margin-top: 40px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+  }
   .unsubscribe-button {
     border: 0;
     background: transparent;
@@ -250,10 +257,58 @@
     font-size: 12px;
     cursor: pointer;
     padding: 4px 0;
-    margin-top: 4px;
     text-decoration: underline;
   }
   .unsubscribe-button:hover { color: var(--rejected); }
+
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 20;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    max-width: 400px;
+    width: 100%;
+    padding: 24px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+  }
+  .modal-title { font-size: 17px; font-weight: 600; margin: 0 0 10px; }
+  .modal-body { font-size: 13.5px; line-height: 1.55; color: var(--text-secondary); margin: 0; }
+  .modal-error {
+    display: none;
+    margin-top: 14px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--rejected) 15%, var(--card));
+    border: 1px solid color-mix(in srgb, var(--rejected) 40%, var(--border));
+    color: var(--rejected);
+    font-size: 12.5px;
+  }
+  .modal-error.open { display: block; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+  .modal-button {
+    border: 0;
+    border-radius: 8px;
+    padding: 9px 16px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .modal-button.cancel { background: var(--track); color: var(--text); }
+  .modal-button.cancel:hover { background: var(--border); }
+  .modal-button.danger { background: var(--rejected); color: white; }
+  .modal-button.danger:hover { opacity: 0.9; }
+  .modal-button:disabled { opacity: 0.6; cursor: wait; }
 </style>
 </head>
 <body>
@@ -266,12 +321,11 @@
       <div>
         <button class="refresh-button" id="refresh-button">Refresh company info</button>
         <div class="refresh-status" id="refresh-status"></div>
-        <button class="unsubscribe-button" id="unsubscribe-button">Unsubscribe</button>
       </div>
     </header>
 
     <div class="frozen-banner" id="frozen-banner">
-      This dashboard is no longer active — you unsubscribed, so this is a read-only snapshot of your data from before then. Message the bot again anytime to reconnect and start fresh.
+      This dashboard is no longer active — you unsubscribed, so this is a read-only snapshot of your data from previous session. Message the bot again anytime to reconnect and start fresh.
     </div>
 
     <div class="pies">
@@ -312,6 +366,22 @@
     </table>
     <div class="filter-menu" id="filter-menu" role="dialog" aria-label="Filter applications"></div>
     <div class="empty" id="empty-state">No applications tracked yet — they'll show up here as ApplyAndFly detects them.</div>
+
+    <div class="footer-actions">
+      <button class="unsubscribe-button" id="unsubscribe-button">Unsubscribe</button>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="unsubscribe-modal" role="dialog" aria-modal="true" aria-labelledby="unsubscribe-modal-title">
+    <div class="modal-card">
+      <p class="modal-title" id="unsubscribe-modal-title">Unsubscribe from ApplyAndFly?</p>
+      <p class="modal-body">This stops the bot from watching your Gmail, revokes its access, and freezes this dashboard as read-only. You can reconnect anytime by messaging the bot again — that starts a brand-new dashboard.</p>
+      <div class="modal-error" id="unsubscribe-modal-error"></div>
+      <div class="modal-actions">
+        <button type="button" class="modal-button cancel" id="unsubscribe-cancel">Cancel</button>
+        <button type="button" class="modal-button danger" id="unsubscribe-confirm">Unsubscribe</button>
+      </div>
+    </div>
   </div>
 
 <script>
@@ -593,23 +663,53 @@
     refreshResearchStatus();
   });
 
-  document.getElementById("unsubscribe-button").addEventListener("click", async () => {
-    const confirmed = confirm(
-      "Unsubscribe from ApplyAndFly?\n\nThis stops the bot from watching your Gmail, revokes its access, and freezes this dashboard as read-only. You can reconnect anytime by messaging the bot again — that starts a brand-new dashboard."
-    );
-    if (!confirmed) return;
+  // Custom in-page modal instead of the browser's native confirm()/alert() —
+  // same one-tab flow (no navigation, no separate page), just styled to
+  // match the dashboard's own theme rather than generic OS chrome. Errors
+  // render inside the modal itself so a failed attempt doesn't get
+  // interrupted by ANOTHER native popup on top of the first.
+  function openUnsubscribeModal() {
+    document.getElementById("unsubscribe-modal-error").classList.remove("open");
+    document.getElementById("unsubscribe-modal").classList.add("open");
+  }
+  function closeUnsubscribeModal() {
+    document.getElementById("unsubscribe-modal").classList.remove("open");
+  }
 
-    const button = document.getElementById("unsubscribe-button");
-    button.disabled = true;
-    button.textContent = "Unsubscribing…";
+  document.getElementById("unsubscribe-button").addEventListener("click", openUnsubscribeModal);
+  document.getElementById("unsubscribe-cancel").addEventListener("click", closeUnsubscribeModal);
+  document.getElementById("unsubscribe-modal").addEventListener("click", event => {
+    if (event.target.id === "unsubscribe-modal") closeUnsubscribeModal(); // click on the backdrop
+  });
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && document.getElementById("unsubscribe-modal").classList.contains("open")) {
+      closeUnsubscribeModal();
+    }
+  });
+
+  document.getElementById("unsubscribe-confirm").addEventListener("click", async () => {
+    const confirmButton = document.getElementById("unsubscribe-confirm");
+    const cancelButton = document.getElementById("unsubscribe-cancel");
+    const errorBox = document.getElementById("unsubscribe-modal-error");
+    confirmButton.disabled = true;
+    cancelButton.disabled = true;
+    confirmButton.textContent = "Unsubscribing…";
+    errorBox.classList.remove("open");
+
     const res = await fetch("/api/unsubscribe", { method: "POST", headers: authHeaders() });
     if (!res.ok) {
       const message = await res.json().catch(() => ({}));
-      alert(message.error || "Could not unsubscribe — please try again.");
-      button.disabled = false;
-      button.textContent = "Unsubscribe";
+      errorBox.textContent = message.error || "Could not unsubscribe — please try again.";
+      errorBox.classList.add("open");
+      confirmButton.disabled = false;
+      cancelButton.disabled = false;
+      confirmButton.textContent = "Unsubscribe";
       return;
     }
+
+    closeUnsubscribeModal();
+    confirmButton.disabled = false;
+    confirmButton.textContent = "Unsubscribe";
     // The token this page is running on just became frozen/historical —
     // reloading pulls the same response shape the server now returns for
     // it, which naturally renders the read-only banner and disables
