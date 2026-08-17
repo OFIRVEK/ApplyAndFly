@@ -813,15 +813,26 @@ dashboardApp.post("/api/unsubscribe", async (req, res) => {
 
   // Best-effort courtesy — the dashboard page itself is the primary
   // confirmation surface, so this isn't queued/retried if the 24h WhatsApp
-  // window happens to be closed (sendWhatsApp already swallows its own
-  // errors rather than throwing).
+  // window happens to be closed (sendWhatsApp/sendWhatsAppCtaUrl already
+  // swallow their own errors rather than throwing).
   const oldDashboardUrl = config.app.publicUrl
     ? `${config.app.publicUrl}/dashboard/${user.dashboardToken}`
     : null;
-  await sendWhatsApp(
-    `✅ Unsubscribed. ApplyAndFly has stopped watching your Gmail and revoked its access.\n\nYour old dashboard is still available to view (read-only)${oldDashboardUrl ? ` at:\n${oldDashboardUrl}` : "."}\n\nYou're welcome to come back at any time! Just message me again — you'll sign in with Google, and a fresh dashboard will start tracking from scratch.`,
-    user.waId
-  );
+  const confirmationBody = `✅ Unsubscribed. ApplyAndFly has stopped watching your Gmail and revoked its access.\n\nYou're welcome to come back at any time! Just message me again — you'll sign in with Google, and a fresh dashboard will start tracking from scratch.`;
+  if (oldDashboardUrl) {
+    // A tappable labeled button (same cta_url pattern as the regular
+    // "Dashboard Manager" notifications) instead of pasting the raw token
+    // -bearing URL into the message body as plain text — plain WhatsApp
+    // text can't give a link custom display text, only cta_url can.
+    await sendWhatsAppCtaUrl(
+      `${confirmationBody}\n\nYour previous dashboard is still available below (read-only).`,
+      "Previous Dashboard", // WhatsApp caps CTA button display_text at 20 characters
+      oldDashboardUrl,
+      user.waId
+    );
+  } else {
+    await sendWhatsApp(confirmationBody, user.waId);
+  }
 
   res.json({ unsubscribed: true, oldDashboardUrl });
 });
