@@ -1329,6 +1329,30 @@ await restoreAndMergeObject(
 })();
 
 /**
+ * ONE-TIME MIGRATION — backfills the Firestore activeUsers/inactiveUsers
+ * directory (see userDirectory.js) for every user who was onboarded BEFORE
+ * the unsubscribe feature shipped. recordActiveUser()/recordInactiveUser()
+ * only ever fire at the exact moment onboarding completes or someone
+ * unsubscribes — an already-onboarded user's record never gets written
+ * retroactively, so without this, anyone who signed up before tonight
+ * (including the app owner's own account) would never appear in either
+ * Firestore collection at all. Fire-and-forget at boot, not awaited —
+ * this directory is a convenience read for a future admin dashboard, not
+ * something any request-handling path depends on. Idempotent (a plain
+ * .set() overwrite), so safe to re-run on every boot.
+ */
+(async function backfillUserDirectory() {
+  for (const user of getAllUsers()) {
+    try {
+      if (user.status === "inactive") await recordInactiveUser(user);
+      else await recordActiveUser(user);
+    } catch (err) {
+      console.error(`[migration] failed to backfill directory entry for ${user.waId}:`, err.message || err);
+    }
+  }
+})();
+
+/**
  * START SERVER — before the initial poll, not after. A redeploy killing a
  * scan mid-flight (the new process's `seen` set is empty, but nothing
  * re-scans the inbox to rediscover that email until poll()'s first tick —
