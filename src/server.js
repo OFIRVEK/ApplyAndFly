@@ -240,16 +240,17 @@ function sendStatusPage(res, message) {
 }
 
 /**
- * STEP 1: start OAuth
+ * STEP 1: start OAuth — WhatsApp-initiated only. There is deliberately no
+ * bare/browser-facing "/auth/google" entry point: it used to exist as a
+ * standalone starting point, but a visit with no WhatsApp context had
+ * nothing to attach the resulting Gmail tokens to, so it silently fell
+ * back to attributing them to the OWNER's own configured WhatsApp number
+ * (config.whatsapp.to) — meaning anyone who found that URL could overwrite
+ * the owner's own Gmail connection, or leak their own inbox contents into
+ * the owner's WhatsApp/dashboard. getAuthUrl(createOAuthState(waId)) is
+ * only ever called from the WhatsApp conversation handler now, always with
+ * a real waId, so every state this app creates has a genuine owner.
  */
-app.get("/auth/google", (req, res) => {
-  // Deliberately doesn't log the generated URL — it carries the CSRF state
-  // token in plain text, and Render's logs shouldn't hold that even though
-  // it's already single-use and short-lived.
-  const url = getAuthUrl(createOAuthState());
-  console.log("Redirecting to Google OAuth");
-  res.redirect(url);
-});
 
 /**
  * STEP 2: OAuth callback
@@ -268,7 +269,7 @@ app.get("/auth/google/callback", async (req, res) => {
     if (!code) {
       authInProgress = false;
       return res.status(400).send(
-        "Missing OAuth code. You must start from /auth/google"
+        "Missing OAuth code. Start this from a WhatsApp message to the bot."
       );
     }
 
@@ -276,14 +277,23 @@ app.get("/auth/google/callback", async (req, res) => {
     if (!stateEntry) {
       authInProgress = false;
       return res.status(400).send(
-        "Invalid or expired auth request. You must start from /auth/google"
+        "Invalid or expired auth request. Start this from a WhatsApp message to the bot."
       );
     }
 
-    // A bare browser visit to /auth/google (no WhatsApp context) is treated
-    // as the configured owner identity, so it still works standalone; a
-    // WhatsApp-initiated flow always carries a real waId.
-    const waId = stateEntry.waId || config.whatsapp.to;
+    // Fail closed rather than falling back to any default identity — every
+    // state this app creates comes from the WhatsApp flow and always
+    // carries a real waId (see the removed /auth/google entry point above
+    // for why a silent fallback here was a real security issue). A state
+    // with no waId should never occur in practice; reject it explicitly
+    // instead of guessing whose account these tokens belong to.
+    if (!stateEntry.waId) {
+      authInProgress = false;
+      return res.status(400).send(
+        "Invalid auth request — no WhatsApp session attached. Start this from a WhatsApp message to the bot."
+      );
+    }
+    const waId = stateEntry.waId;
 
     const { tokens } = await oauth2Client.getToken(code);
     upsertUser(waId, { tokens });
@@ -305,16 +315,12 @@ app.get("/auth/google/callback", async (req, res) => {
       console.error(`Failed to capture email/start watch for ${waId}:`, err.response?.data || err.message || err);
     }
 
-    if (stateEntry.waId) {
-      sessions.set(waId, { state: "awaiting_folder_answer" });
-      await sendWhatsApp(
-        `✅ Google connected!\n\nDo you have a folder where you moved your recent job application emails? If yes, reply with its name. If not, reply "Continue".`,
-        waId
-      );
-      return sendStatusPage(res, "✅ Auth successful — check WhatsApp to finish setup.");
-    }
-
-    sendStatusPage(res, "✅ Auth successful. Bot is now running.");
+    sessions.set(waId, { state: "awaiting_folder_answer" });
+    await sendWhatsApp(
+      `✅ Google connected!\n\nDo you have a folder where you moved your recent job application emails? If yes, reply with its name. If not, reply "Continue".`,
+      waId
+    );
+    sendStatusPage(res, "✅ Auth successful — check WhatsApp to finish setup.");
   } catch (err) {
     authInProgress = false;
 
@@ -1336,7 +1342,7 @@ await restoreAndMergeObject(
  */
 app.listen(PORT, () => {
   console.log(`Running on http://localhost:${PORT}`);
-  console.log(`START HERE → http://localhost:${PORT}/auth/google`);
+  console.log("START HERE → message the bot on WhatsApp to begin onboarding");
 });
 
 poll().catch((err) => console.error("Initial poll failed:", err.response?.data || err.message || err));
