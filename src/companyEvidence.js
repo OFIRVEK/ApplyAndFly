@@ -447,7 +447,9 @@ Return ONLY valid JSON in this exact shape:
 
 Ignore navigation menus, cookie text, recruitment pitches, promotions, isolated news headlines, and unrelated product offers. If the evidence does not genuinely explain what the company does, say "Not verified" rather than writing a plausible description.`;
 
-  const summary = await askGroqForJson(prompt, "llama-3.3-70b-versatile");
+  // llama-3.3-70b-versatile was deprecated by Groq (announced June 2026);
+  // qwen/qwen3.6-27b is Groq's own recommended replacement for it.
+  const summary = await askGroqForJson(prompt, "qwen/qwen3.6-27b");
   return {
     employees: summary.employees || "Not publicly disclosed",
     industry: summary.industry || "Not verified",
