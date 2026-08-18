@@ -42,10 +42,17 @@ dashboardApp.use(express.json());
 // hand that URL to third parties (Referrer-Policy) and never cache the
 // token-bearing pages/API responses to shared disk (Cache-Control on the
 // token-carrying routes only — static pages like the homepage stay
-// cacheable).
+// cacheable). Strict-Transport-Security tells the browser to skip the
+// insecure http:// hop entirely on every future visit — Render already
+// 301-redirects http to https, but that first redirect round-trip (or any
+// request after a browser's HSTS cache expires) is exactly the window an
+// on-path attacker on a hostile network could intercept, e.g. classic
+// SSL-stripping. 6 months, applies to all subdomains too since Render's
+// cert is a *.onrender.com wildcard.
 dashboardApp.use((req, res, next) => {
   res.set("Referrer-Policy", "no-referrer");
   res.set("X-Content-Type-Options", "nosniff");
+  res.set("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
   if (req.path.startsWith("/dashboard/") || req.path.startsWith("/api/")) {
     res.set("Cache-Control", "no-store");
   }
