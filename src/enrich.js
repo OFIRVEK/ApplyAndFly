@@ -226,7 +226,16 @@ export function extractPositionFromSubject(subject = "") {
 export function formatReceivedDate(dateHeader) {
   const parsed = dateHeader ? new Date(dateHeader) : null;
   if (!parsed || isNaN(parsed.getTime())) return "Date unavailable";
+  // Without an explicit timeZone, toLocaleString falls back to the SERVER's
+  // own timezone (Render's containers run in UTC), not the user's — a real
+  // bug: a 20:55 Israel-time application was showing as "5:55 PM" in the
+  // WhatsApp message, exactly the 3-hour UTC/IDT gap. No per-user timezone
+  // preference exists yet (every user seen so far is in Israel), so
+  // Asia/Jerusalem is hardcoded for now; this correctly handles Israel's
+  // own DST transitions (IST/IDT) automatically, unlike a fixed UTC+2/+3
+  // offset would.
   return parsed.toLocaleString("en-US", {
+    timeZone: "Asia/Jerusalem",
     weekday: "short",
     year: "numeric",
     month: "short",
