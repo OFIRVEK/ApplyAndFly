@@ -196,7 +196,7 @@ function addCandidate(candidates, domain, evidence) {
   const host = domain?.toLowerCase().replace(/^www\./, "");
   if (isBlockedHost(host)) return;
   const root = rootDomain(host);
-  const existing = candidates.get(root) || { domain: root, score: 0, evidence: [], sourceUrls: new Set(), verifiedSite: null, fetchedSite: null };
+  const existing = candidates.get(root) || { domain: root, score: 0, evidence: [], sourceUrls: new Set(), verifiedSite: null };
   existing.score += evidence.score;
   existing.evidence.push(evidence);
   if (evidence.url) existing.sourceUrls.add(evidence.url);
@@ -268,12 +268,6 @@ async function verifyTopCandidates(candidates, company, attempted) {
     attempted.add(candidate.domain);
     try {
       const page = await fetchPage(`https://${candidate.domain}`);
-      // Kept even when the identity check below fails — this is the page a
-      // best-effort fallback can still summarize from later instead of
-      // throwing away a fetch we already paid for. `verifiedSite` (below)
-      // stays strictly gated on the identity match; this is not treated as
-      // confirmed on its own.
-      candidate.fetchedSite = page;
       const identityText = [
         page.title, page.siteName, page.description,
         ...page.organizations.flatMap((organization) => [organization.name, organization.description]),
@@ -344,33 +338,15 @@ async function resolveCompany({ company, position, fromHeader, body, html }) {
   }
 
   // A company that failed verification recently is also worth remembering
-  // — see UNVERIFIED_TTL_MS in companyIdentityCache.js for why this matters
-  // more than it might look like it should. No independent corroboration is
-  // required to reuse this (unlike the verified-cache path above): the
-  // output stays honestly labeled "Unverified matching information" either
-  // way, so an occasional company-name collision here costs far less than
-  // the alternative of burning a full search round on every single email.
+  // — see UNVERIFIED_TTL_MS in companyIdentityCache.js. Without this, a
+  // company that never verifies (small company, bot-blocked site, etc.)
+  // burns a full fresh round of search quota on EVERY email about it —
+  // confirmation, then interview, then rejection can each independently
+  // re-run the same failed search. This is purely an efficiency
+  // short-circuit — it does not change what gets shown to the user, only
+  // avoids repeating a search that just failed minutes/hours ago.
   if (cached && !cached.verified) {
-    // Even "found absolutely nothing" is worth remembering for the same
-    // short window — a company name that returned zero usable candidates
-    // once is very unlikely to return different results minutes or hours
-    // later, so this skips a doomed search round entirely rather than just
-    // skimping on the page re-fetch below.
-    if (!cached.fallbackDomain) {
-      return { verified: false, domain: null, score: 0, homepage: null, sourceUrls: [], linkedinUrl: null, fallbackDomain: null, fallbackHomepage: null };
-    }
-    try {
-      const page = await fetchPage(`https://${cached.fallbackDomain}`);
-      return {
-        verified: false, domain: null, score: cached.score || 0, homepage: null, sourceUrls: [],
-        linkedinUrl: cached.linkedinUrl || null, fallbackDomain: cached.fallbackDomain, fallbackHomepage: page,
-      };
-    } catch {
-      return {
-        verified: false, domain: null, score: 0, homepage: null, sourceUrls: [],
-        linkedinUrl: cached.linkedinUrl || null, fallbackDomain: null, fallbackHomepage: null,
-      };
-    }
+    return { verified: false, domain: null, score: 0, homepage: null, sourceUrls: [], linkedinUrl: null };
   }
 
   const primaryQueries = [`"${company}" official website`];
@@ -406,13 +382,6 @@ async function resolveCompany({ company, position, fromHeader, body, html }) {
     homepage: verified ? winner.verifiedSite : null,
     sourceUrls: verified ? [...winner.sourceUrls] : [],
     linkedinUrl: allLinkedinResults[0]?.url || null,
-    // Exposed even when verification failed, so a caller can still show a
-    // best-effort answer instead of a blank dead end — the top-scored
-    // candidate's page, fetched above, just didn't clear the strict
-    // identity-match bar. Never treated as confirmed fact; only ever
-    // surfaced honestly labeled as unverified.
-    fallbackDomain: winner?.domain || null,
-    fallbackHomepage: winner?.fetchedSite || null,
   };
 
   if (result.verified) {
@@ -424,15 +393,11 @@ async function resolveCompany({ company, position, fromHeader, body, html }) {
       linkedinUrl: result.linkedinUrl,
     });
   } else {
-    // Cached too — even a "nothing found at all" outcome — just under
-    // UNVERIFIED_TTL_MS's much shorter window. See the cache-reuse block
-    // above for why this is worth doing at all.
-    setCachedCompanyIdentity(company, {
-      verified: false,
-      score: result.score,
-      linkedinUrl: result.linkedinUrl,
-      fallbackDomain: result.fallbackDomain,
-    });
+    // Cached too, just under UNVERIFIED_TTL_MS's much shorter window — see
+    // the cache-reuse block above for why. This is purely an efficiency
+    // short-circuit (see comment there); it carries no data used to build
+    // a user-facing answer.
+    setCachedCompanyIdentity(company, { verified: false });
   }
 
   return result;
@@ -470,17 +435,13 @@ async function collectOfficialEvidence(homepage, domain) {
   };
 }
 
-// True last resort: no candidate domain was even found to attempt a
-// best-effort summary from. Confidence stays 0 so this is never mistaken
-// for a real answer, and so a later re-research attempt (e.g. the
-// dashboard's "Refresh company info") is still free to try again.
 function unverifiedSnapshot(company) {
   return {
     employees: "Not publicly disclosed",
     industry: "Not verified",
     hq: "Unknown",
     publicPrivate: "Unknown",
-    whatTheyDo: `Unverified matching information: no public information could be found for "${company}".`,
+    whatTheyDo: `Company identity for "${company}" could not be confidently verified from the application email and public sources.`,
     sources: [],
     confidence: 0,
   };
@@ -522,43 +483,16 @@ Ignore navigation menus, cookie text, recruitment pitches, promotions, isolated 
 
 export async function researchCompanyFromEvidence({ company, position, fromHeader, body = "", html = "" }) {
   const identity = await resolveCompany({ company, position, fromHeader, body, html });
+  if (!identity.verified) return unverifiedSnapshot(company);
 
-  if (identity.verified) {
-    const officialEvidence = await collectOfficialEvidence(identity.homepage, identity.domain);
-    return summarizeVerifiedCompany({
-      company,
-      position,
-      domain: `https://${identity.domain}`,
-      evidenceText: officialEvidence.text,
-      sources: officialEvidence.sources,
-      linkedinUrl: identity.linkedinUrl,
-      confidence: identity.score,
-    });
-  }
-
-  // Not confidently verified — rather than a blank "not found" dead end,
-  // summarize whatever the top-scored (but unconfirmed) candidate's own
-  // page actually said, and say so plainly. Confidence is forced to 0
-  // regardless of the raw candidate score, so this can never be mistaken
-  // for a verified result downstream (see isAlreadyVerified in store.js) —
-  // a later refresh is still free to try to actually verify it.
-  if (identity.fallbackHomepage) {
-    try {
-      const summary = await summarizeVerifiedCompany({
-        company,
-        position,
-        domain: `https://${identity.fallbackDomain}`,
-        evidenceText: pageEvidence(identity.fallbackHomepage),
-        sources: [identity.fallbackHomepage.url],
-        linkedinUrl: identity.linkedinUrl,
-        confidence: 0,
-      });
-      return { ...summary, whatTheyDo: `Unverified matching information: ${summary.whatTheyDo}`, confidence: 0 };
-    } catch {
-      // The fallback candidate's page couldn't be summarized either —
-      // fall through to the plain "nothing found" snapshot below.
-    }
-  }
-
-  return unverifiedSnapshot(company);
+  const officialEvidence = await collectOfficialEvidence(identity.homepage, identity.domain);
+  return summarizeVerifiedCompany({
+    company,
+    position,
+    domain: `https://${identity.domain}`,
+    evidenceText: officialEvidence.text,
+    sources: officialEvidence.sources,
+    linkedinUrl: identity.linkedinUrl,
+    confidence: identity.score,
+  });
 }

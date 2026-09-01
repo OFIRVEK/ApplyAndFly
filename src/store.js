@@ -215,7 +215,7 @@ function isAlreadyVerified(app) {
     && Array.isArray(app.research?.sources)
     && app.research.sources.some((source) => !/linkedin\.com/i.test(source))
     && Boolean(app.briefExplanation)
-    && !/could not be confidently verified|not verified|unverified matching information/i.test(app.briefExplanation);
+    && !/could not be confidently verified|not verified/i.test(app.briefExplanation);
 }
 
 // Replaces a description only after the evidence-first pipeline has verified
