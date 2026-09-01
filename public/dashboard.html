@@ -209,6 +209,13 @@
   .badge-progress { background: color-mix(in srgb, var(--progress) 18%, transparent); color: var(--progress); }
   .badge-rejected { background: color-mix(in srgb, var(--rejected) 18%, transparent); color: var(--rejected); }
   .badge-hired { background: color-mix(in srgb, var(--hired) 18%, transparent); color: var(--hired); }
+  .referral-tag {
+    display: block;
+    margin-top: 3px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
   .status-select {
     appearance: none;
     border: 1px solid var(--border);
@@ -600,7 +607,7 @@
 
     tbody.innerHTML = [...apps].sort(compareApplications).map(a => `
       <tr>
-        <td class="company">${escapeHtml(a.company)}</td>
+        <td class="company">${escapeHtml(a.company)}${a.referredBy ? `<span class="referral-tag">🤝 Referred by ${escapeHtml(a.referredBy)}</span>` : ""}</td>
         <td>${escapeHtml(a.position || "Not specified")}</td>
         <td>${formatDate(a.appliedDate)}</td>
         <td>${renderStatusSelect(a)}</td>

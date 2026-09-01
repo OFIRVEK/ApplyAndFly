@@ -1119,6 +1119,7 @@ async function processMessageInner(gmail, m, waId) {
         threadId,
         research: { sources: snapshot.sources || [], confidence: snapshot.confidence || 0 },
         dashboardGeneration: getUser(waId)?.dashboardToken,
+        referredBy: details.referredBy,
       });
       return true;
     } catch (err) {
@@ -1179,6 +1180,7 @@ async function processMessageInner(gmail, m, waId) {
       sourceMessageId: m.id,
       research: { sources: snapshot.sources || [], confidence: snapshot.confidence || 0 },
       dashboardGeneration: user?.dashboardToken,
+      referredBy: details.referredBy,
     });
   } catch (err) {
     console.error(`[${ts()}] Enrichment error [research] (id=${m.id}):`, err.response?.data || err.message || err);

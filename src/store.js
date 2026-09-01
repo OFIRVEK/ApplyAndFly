@@ -56,7 +56,7 @@ export function findApplication(waId, company, position, sourceMessageId, applie
 // Adds a new tracked application at "Applied" status. Gmail message IDs make
 // restart scans idempotent without treating one company as a single row:
 // separate roles/applications at the same company are intentionally retained.
-export function addApplication({ waId, company, position, briefExplanation, appliedDate, sourceMessageId, threadId, research, dashboardGeneration }) {
+export function addApplication({ waId, company, position, briefExplanation, appliedDate, sourceMessageId, threadId, research, dashboardGeneration, referredBy }) {
   const apps = loadApplications();
   if (sourceMessageId && apps.some((a) => a.waId === waId && a.sourceMessageId === sourceMessageId)) return false;
 
@@ -71,6 +71,7 @@ export function addApplication({ waId, company, position, briefExplanation, appl
     ...(sourceMessageId ? { sourceMessageId } : {}),
     ...(threadId ? { threadId } : {}),
     ...(research ? { research } : {}),
+    ...(referredBy ? { referredBy } : {}),
     // Which dashboardToken was "current" when this row was created — lets a
     // frozen (post-unsubscribe) dashboard show exactly what belonged to
     // that subscription, while a fresh resubscribe's dashboard starts
@@ -157,7 +158,7 @@ export function updateApplicationStatusByRow({ waId, company, position, appliedD
 // any other reason). Rather than silently dropping the signal, this backs
 // the row in directly at the target status instead of "Applied" — losing
 // the true apply date, but at least surfacing it on the dashboard.
-export function upsertApplicationStatus({ waId, company, position, briefExplanation, status, fallbackDate, sourceMessageId, threadId, research, dashboardGeneration }) {
+export function upsertApplicationStatus({ waId, company, position, briefExplanation, status, fallbackDate, sourceMessageId, threadId, research, dashboardGeneration, referredBy }) {
   const apps = loadApplications();
   const key = normalize(company);
   const positionKey = normalize(position);
@@ -183,6 +184,7 @@ export function upsertApplicationStatus({ waId, company, position, briefExplanat
     ...(threadId ? { threadId } : {}),
     ...(research ? { research } : {}),
     ...(dashboardGeneration ? { dashboardGeneration } : {}),
+    ...(referredBy ? { referredBy } : {}),
   });
   saveApplications(apps);
 }
@@ -213,7 +215,7 @@ function isAlreadyVerified(app) {
     && Array.isArray(app.research?.sources)
     && app.research.sources.some((source) => !/linkedin\.com/i.test(source))
     && Boolean(app.briefExplanation)
-    && !/could not be confidently verified|not verified/i.test(app.briefExplanation);
+    && !/could not be confidently verified|not verified|unverified matching information/i.test(app.briefExplanation);
 }
 
 // Replaces a description only after the evidence-first pipeline has verified

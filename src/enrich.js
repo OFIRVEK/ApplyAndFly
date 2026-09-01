@@ -106,6 +106,7 @@ const CLASSIFICATION_SCHEMA = {
       status: { type: "string", description: "Short status phrase, e.g. 'Application received', 'Interview scheduled', 'Not selected', 'Offer extended'." },
       recruiterName: { type: ["string", "null"], description: "Name of a specific recruiter/contact person mentioned, or null if none is named." },
       location: { type: ["string", "null"], description: "Job/office location mentioned (city/country), or null if none is stated." },
+      referredBy: { type: ["string", "null"], description: "Name of the person who referred the recipient for this specific role (e.g. an employee referral program, 'John Smith referred you', 'submitted via a referral from Jane'), or null if the email does not say the recipient was referred by anyone." },
       confidence: { type: "integer", description: "0-100: how confident you are in eventType specifically, not the other fields." },
       evidenceQuotes: {
         type: "array",
@@ -118,7 +119,7 @@ const CLASSIFICATION_SCHEMA = {
         description: "create = a new confirmation to track. update = a status change on an existing tracked application. ignore = not job-related or not about the recipient's own application. review = plausible but uncertain enough a human should check it.",
       },
     },
-    required: ["eventType", "company", "position", "status", "recruiterName", "location", "confidence", "evidenceQuotes", "recommendedAction"],
+    required: ["eventType", "company", "position", "status", "recruiterName", "location", "referredBy", "confidence", "evidenceQuotes", "recommendedAction"],
     additionalProperties: false,
   },
 };
@@ -174,11 +175,13 @@ Email sender: ${fromHeader}
 Email body (may be partial):
 ${excerptForClassification(body)}
 ${hintBlock}
-First decide the eventType. "application_confirmation" means a direct confirmation that the recipient's OWN job application was received/submitted (e.g. "Thank you for applying", "We received your application", "Your application to X has been submitted") — read the ENTIRE email before deciding, since many rejection/interview/offer emails open with that exact same style of line before moving on to their actual content. An opening thank-you does NOT make it "application_confirmation" if the email goes on to reject, invite to an interview/assessment, or extend an offer — those are "rejection", "interview", and "offer" respectively.
+First decide the eventType. "application_confirmation" means a direct confirmation that the recipient's OWN candidacy for a specific role has already been submitted and received — normally because the recipient applied directly (e.g. "Thank you for applying", "We received your application", "Your application to X has been submitted"), but also when someone ELSE referred/submitted the recipient and the company confirms it now has that information (e.g. "You were referred by John Smith for a position at X, we received your information and will be in touch" — the recipient is now genuinely in that company's pipeline, exactly like a direct applicant, just via a referral instead of applying themselves). Read the ENTIRE email before deciding, since many rejection/interview/offer emails open with that exact same style of line before moving on to their actual content. An opening thank-you does NOT make it "application_confirmation" if the email goes on to reject, invite to an interview/assessment, or extend an offer — those are "rejection", "interview", and "offer" respectively.
 
 For the "position" field: check the EMAIL SUBJECT LINE carefully, not just the body — job titles are very often stated there even when the body is generic (e.g. "Thank you for applying for the QA Engineer position at X", "We Got It: Thanks for applying for Flight Test & QA"). Only use "Not specified" if neither the subject nor the body names a role.
 
-Only use "application_confirmation" if the email confirms the recipient's OWN application was received — not a rejection, not an interview/assessment invite, not an offer, and NOT a job the recipient hasn't applied to yet. Use "recommendation" for job recommendation/suggestion digests pitching a role the recipient has NOT applied to — these come from job boards, LinkedIn, or recruiting agencies and are phrased as an invitation to apply or a "we found this for you" pitch, in any language (English examples: "jobs you may like", "job alert", "new jobs for you"; a Hebrew example: "חשבנו עליך כשראינו את המשרה הזו" = "we thought of you when we saw this role" — this is a pitch to APPLY, not a confirmation that an application was already submitted). Use "non_job" for: banking/payment/transaction notifications (even ones with a reference/confirmation number), bills, invoices, receipts, shipping/delivery updates, subscription or account notices, government/insurance correspondence, or anything else not explicitly a clean application-related email. This also includes ANY purchase/booking/reservation confirmation for something other than a job — concert or event tickets, restaurant reservations, flight/hotel bookings, online orders, deliveries, etc. — and ANY membership/loyalty-program/subscription/service sign-up confirmation (e.g. "Welcome to X Membership"), even if it uses the word "application" or "welcome" (a membership application, loan application, or software application is NOT a job application). Such emails can easily contain words that superficially look job-related (e.g. a seat "position", a "job well done" in marketing copy) — that is NOT a job application. Words like "confirmation," "welcome," "application," "position," or the presence of a reference number are NOT enough on their own — the email must be unmistakably confirming that the recipient ALREADY applied, not inviting them to. Use "uncertain" only if you have genuinely read the whole email and still cannot tell.
+For the "referredBy" field: set this to a person's name ONLY if the email explicitly states the recipient's OWN application for THIS role came in via a referral from that person (e.g. "You were referred by John Smith", "Submitted via an employee referral from Jane Doe", "Thanks to Alex's recommendation, your application has been fast-tracked" — including non-English equivalents, e.g. Hebrew "הופנית על ידי" / "בהמלצת"). This is about the recipient being referred, not the recipient referring someone else. Leave it null for a normal direct/online application, and null if referral language is vague or generic (e.g. "refer a friend" program advertising, with no name tied to the recipient's own application).
+
+Only use "application_confirmation" if the email confirms the recipient's OWN candidacy (applied directly, or referred/submitted by someone else — see above) was received — not a rejection, not an interview/assessment invite, not an offer, and NOT a job the recipient hasn't applied to yet. Use "recommendation" for job recommendation/suggestion digests pitching a role the recipient has NOT applied to and has NOT been submitted for — these come from job boards, LinkedIn, or recruiting agencies and are phrased as an invitation to apply or a "we found this for you" pitch, in any language (English examples: "jobs you may like", "job alert", "new jobs for you"; a Hebrew example: "חשבנו עליך כשראינו את המשרה הזו" = "we thought of you when we saw this role" — this is a pitch to APPLY, not a confirmation that an application was already submitted). Do NOT use "recommendation" just because the email uses the word "recommended" in a subject like "You were recommended for a position at X" — read the body: if it goes on to say the company already received the recipient's information/application (a referral submission, not a job pitch), that is "application_confirmation" with referredBy set, not "recommendation". Use "non_job" for: banking/payment/transaction notifications (even ones with a reference/confirmation number), bills, invoices, receipts, shipping/delivery updates, subscription or account notices, government/insurance correspondence, or anything else not explicitly a clean application-related email. This also includes ANY purchase/booking/reservation confirmation for something other than a job — concert or event tickets, restaurant reservations, flight/hotel bookings, online orders, deliveries, etc. — and ANY membership/loyalty-program/subscription/service sign-up confirmation (e.g. "Welcome to X Membership"), even if it uses the word "application" or "welcome" (a membership application, loan application, or software application is NOT a job application). Such emails can easily contain words that superficially look job-related (e.g. a seat "position", a "job well done" in marketing copy) — that is NOT a job application. Words like "confirmation," "welcome," "application," "position," or the presence of a reference number are NOT enough on their own — the email must be unmistakably confirming that the recipient ALREADY applied, not inviting them to. Use "uncertain" only if you have genuinely read the whole email and still cannot tell.
 
 For evidenceQuotes: copy 1-3 SHORT phrases EXACTLY as they appear in the subject or body above — character-for-character, not paraphrased, not translated, not summarized. These will be checked against the actual email text, so an invented or reworded quote will fail verification and this classification will be treated as unreliable regardless of how confident you say you are.
 
@@ -409,10 +412,15 @@ function isNoiseDomain(domain) {
 // even when the SENDER address is the ATS's generic notification domain.
 // This is just reading links out of an email already legitimately received,
 // not scraping anything.
+// Common TLDs a plain-text mention like "www.bynet.co.il" or "bynet.co.il"
+// can end in when it isn't wrapped in an href at all (e.g. the plain-text
+// alternative part of an email, or a bare mention with no protocol prefix).
+const BARE_DOMAIN_TLDS = "com|co\\.il|io|ai|net|org|co";
+
 function extractCandidateDomainsFromBody(body = "", companySlug = "") {
-  const urls = body.match(/https?:\/\/[^\s"'<>)]+/g) || [];
   const domains = new Set();
 
+  const urls = body.match(/https?:\/\/[^\s"'<>)]+/g) || [];
   for (const url of urls) {
     try {
       const domain = new URL(url).hostname.toLowerCase().replace(/^www\./, "");
@@ -420,6 +428,17 @@ function extractCandidateDomainsFromBody(body = "", companySlug = "") {
     } catch {
       // malformed URL, skip
     }
+  }
+
+  // Some emails show a link as plain visible text with no "http(s)://"
+  // prefix (e.g. "Visit us at www.bynet.co.il") — the regex above alone
+  // misses those. Only fires on a bare "word.tld" shape, so it doesn't
+  // pick up unrelated prose.
+  const bareRegex = new RegExp(`\\b(?:www\\.)?[a-z0-9-]+(?:\\.[a-z0-9-]+)*\\.(?:${BARE_DOMAIN_TLDS})\\b`, "gi");
+  const bareMatches = body.match(bareRegex) || [];
+  for (const raw of bareMatches) {
+    const domain = raw.toLowerCase().replace(/^www\./, "");
+    if (!isNoiseDomain(domain)) domains.add(domain);
   }
 
   // Prefer domains that actually mention the company name.
@@ -457,6 +476,28 @@ function extractDomainsFromHtmlLinks(html = "") {
     }
   }
   return domains;
+}
+
+// Any href in the email, regardless of what its anchor text says — many
+// ATS emails link the company's own site through a button/logo/image whose
+// visible text is generic ("View details", a graphic, nothing at all), so
+// requiring website-ish anchor text (extractDomainsFromHtmlLinks above)
+// misses them. Cast wide here but only trust the result when the domain
+// itself contains the company name — that's independent, strong evidence
+// regardless of what the link was labeled.
+function extractAllHtmlLinkDomains(html = "") {
+  const domains = new Set();
+  const hrefRegex = /href=["']([^"']+)["']/gi;
+  let match;
+  while ((match = hrefRegex.exec(html)) !== null) {
+    try {
+      const domain = new URL(match[1]).hostname.toLowerCase().replace(/^www\./, "");
+      if (!isNoiseDomain(domain)) domains.add(domain);
+    } catch {
+      // relative/malformed URL, skip
+    }
+  }
+  return [...domains];
 }
 
 async function tryDomain(domain) {
@@ -497,6 +538,20 @@ async function findWebsiteBlurb(company, fromHeader, body, html) {
     }
   }
 
+  const slug = company.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  // 1b. Any other href in the email whose domain itself contains the
+  // company name — e.g. a "view application" button linking to
+  // www.bynet.co.il with generic anchor text. The domain matching the
+  // company name is trusted on its own here, independent of anchor text.
+  if (html && slug) {
+    for (const domain of extractAllHtmlLinkDomains(html)) {
+      if (!domain.replace(/\./g, "").includes(slug)) continue;
+      const blurb = await attempt(domain);
+      if (blurb) return blurb;
+    }
+  }
+
   // 2. The sender's own domain, when it's not a third-party ATS/job-board —
   // often correct for smaller companies that email directly.
   const senderDomain = extractSenderDomain(fromHeader);
@@ -504,8 +559,6 @@ async function findWebsiteBlurb(company, fromHeader, body, html) {
     const blurb = await attempt(senderDomain);
     if (blurb) return blurb;
   }
-
-  const slug = company.toLowerCase().replace(/[^a-z0-9]/g, "");
 
   // 3. Any other non-noise link embedded in the body — a "view job" or
   // "track application" link sometimes points to the company's own branded
@@ -548,6 +601,7 @@ export async function enrichCompany({ company, position, fromHeader, body, html 
 // server.js) rather than embedded as raw text here — WhatsApp only lets a
 // button carry custom link text, plain message text can't.
 export function formatConfirmationMessage(details, snapshot, dateHeader) {
+  const referralLine = details.referredBy ? `\n🤝 Referred by\n${details.referredBy}\n` : "";
   return `🚀 ApplyAndFly
 
 We detected a new application update.
@@ -560,7 +614,7 @@ ${details.position}
 
 📩 Status
 ${details.status}
-
+${referralLine}
 📅 Timeline
 Application received ${formatReceivedDate(dateHeader)}.
 

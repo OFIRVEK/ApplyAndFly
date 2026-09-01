@@ -66,6 +66,14 @@ export const config = {
     apiKey: process.env.SERPER_API_KEY,
   },
 
+  // Google's official Programmable Search Engine (Custom Search JSON API) —
+  // see googleSearch.js. Distinct from the google.clientId/clientSecret
+  // above, which are for Gmail OAuth, not search.
+  googleSearch: {
+    apiKey: process.env.GOOGLE_SEARCH_API_KEY,
+    engineId: process.env.GOOGLE_SEARCH_ENGINE_ID,
+  },
+
   firecrawl: {
     apiKey: process.env.FIRECRAWL_API_KEY,
   },
