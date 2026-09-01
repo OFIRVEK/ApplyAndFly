@@ -1,7 +1,7 @@
 import axios from "axios";
 import { askGroqForJson, extractSenderDomain, isAtsOrGenericDomain } from "./enrich.js";
 import { assertPublicHostname, MAX_PAGE_BYTES, isTextContentType } from "./netGuard.js";
-import { googleSearch } from "./googleSearch.js";
+import { tavilySearch } from "./tavily.js";
 import { getCachedCompanyIdentity, setCachedCompanyIdentity } from "./companyIdentityCache.js";
 
 // Evidence-first company research.
@@ -220,12 +220,12 @@ function extractDomainMentions(text = "") {
     .filter(Boolean))];
 }
 
-// Runs a batch of Google (Custom Search JSON API) queries and folds the
-// results into `candidates` by score. Returns only THIS round's LinkedIn
-// hits (not accumulated across calls) so a caller running a second round
-// never re-scores the same LinkedIn snippet twice.
+// Runs a batch of Tavily search queries and folds the results into
+// `candidates` by score. Returns only THIS round's LinkedIn hits (not
+// accumulated across calls) so a caller running a second round never
+// re-scores the same LinkedIn snippet twice.
 async function searchAndScoreCandidates(candidates, queries, company) {
-  const resultGroups = await Promise.all(queries.map((query) => googleSearch(query, { maxResults: 5 })));
+  const resultGroups = await Promise.all(queries.map((query) => tavilySearch(query, { maxResults: 5 })));
   const linkedinResults = [];
   for (let groupIndex = 0; groupIndex < resultGroups.length; groupIndex += 1) {
     for (let index = 0; index < resultGroups[groupIndex].length; index += 1) {
@@ -310,14 +310,14 @@ async function resolveCompany({ company, position, fromHeader, body, html }) {
   if (senderDomain) addCandidate(candidates, senderDomain, { type: "corporate-email-sender", score: 45 });
   addDomainsFromEmail(candidates, body, html);
 
-  // A company already resolved before doesn't need to spend Google search
+  // A company already resolved before doesn't need to spend Tavily search
   // quota again — but a name-text match alone isn't enough to trust the
   // cache: two unrelated real companies can share a generic name (e.g. two
   // different companies both called "Sela"), and a text match against the
   // cached domain's homepage would false-positive on either one. Only
   // short-circuit when THIS email independently corroborates the cached
   // domain (sender domain or a link in the email body pointing at it) —
-  // otherwise fall through to the full Google-search-backed resolution below,
+  // otherwise fall through to the full Tavily-backed resolution below,
   // which re-derives the domain from this email's own evidence.
   const cached = getCachedCompanyIdentity(company);
   if (cached?.verified && cached.domain && candidates.has(rootDomain(cached.domain))) {
@@ -337,9 +337,9 @@ async function resolveCompany({ company, position, fromHeader, body, html }) {
           linkedinUrl: cached.linkedinUrl || null,
         };
       }
-      console.log(`[company-resolve] cached domain for "${company}" no longer matches, re-resolving via Google search`);
+      console.log(`[company-resolve] cached domain for "${company}" no longer matches, re-resolving via Tavily`);
     } catch {
-      console.log(`[company-resolve] cached domain for "${company}" unreachable, re-resolving via Google search`);
+      console.log(`[company-resolve] cached domain for "${company}" unreachable, re-resolving via Tavily`);
     }
   }
 
@@ -382,11 +382,11 @@ async function resolveCompany({ company, position, fromHeader, body, html }) {
   await verifyTopCandidates(candidates, company, attempted);
   let { winner, verified } = pickVerifiedWinner(candidates);
 
-  // A single round of Google search queries sometimes isn't enough for smaller or
+  // A single round of Tavily queries sometimes isn't enough for smaller or
   // ambiguous company names. Before giving up, retry with broader phrasings
   // that tend to surface a careers or LinkedIn-about page even when
   // "official website" doesn't — only spent when the first pass failed, so
-  // well-known companies never pay for the extra Google search calls.
+  // well-known companies never pay for the extra Tavily calls.
   if (!verified) {
     const broaderQueries = [
       `"${company}" careers`,
@@ -504,9 +504,11 @@ Return ONLY valid JSON in this exact shape:
 
 Ignore navigation menus, cookie text, recruitment pitches, promotions, isolated news headlines, and unrelated product offers. If the evidence does not genuinely explain what the company does, say "Not verified" rather than writing a plausible description.`;
 
-  // llama-3.3-70b-versatile was deprecated by Groq (announced June 2026);
-  // qwen/qwen3.6-27b is Groq's own recommended replacement for it.
-  const summary = await askGroqForJson(prompt, "qwen/qwen3.6-27b");
+  // llama-3.3-70b-versatile was deprecated by Groq (announced June 2026),
+  // replaced with qwen/qwen3.6-27b — which Groq itself then deprecated
+  // (email received 2026-09-01, decommissioned 2026-09-14) in favor of
+  // qwen/qwen3.8-27b.
+  const summary = await askGroqForJson(prompt, "qwen/qwen3.8-27b");
   return {
     employees: summary.employees || "Not publicly disclosed",
     industry: summary.industry || "Not verified",

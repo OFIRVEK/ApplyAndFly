@@ -266,12 +266,13 @@ The source text above may be dominated by marketing copy, seasonal promotions/de
 
 Never invent a specific fact (a number, a date, a headquarters city, a piece of news) that isn't genuinely known. When in doubt, answer 'Not found' rather than guessing.`;
 
-  // llama-3.3-70b-versatile was deprecated by Groq (announced June 2026);
-  // qwen/qwen3.6-27b is Groq's own recommended replacement for it. This
-  // file isn't currently imported anywhere (superseded by
-  // companyEvidence.js's evidence-first pipeline), updated for consistency
-  // in case it's ever reactivated.
-  return askGroqForJson(prompt, "qwen/qwen3.6-27b");
+  // llama-3.3-70b-versatile was deprecated by Groq (announced June 2026),
+  // replaced with qwen/qwen3.6-27b — which Groq itself then deprecated
+  // (email received 2026-09-01, decommissioned 2026-09-14) in favor of
+  // qwen/qwen3.8-27b. This file isn't currently imported anywhere
+  // (superseded by companyEvidence.js's evidence-first pipeline), updated
+  // for consistency in case it's ever reactivated.
+  return askGroqForJson(prompt, "qwen/qwen3.8-27b");
 }
 
 function fractionResolved(research) {

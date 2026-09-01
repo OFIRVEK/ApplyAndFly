@@ -270,9 +270,11 @@ Do not fabricate precise numbers you are not reasonably confident about — use 
   // applications — much lower volume than the classification step — so we
   // can afford the more capable model here for better accuracy without
   // meaningfully affecting the daily token budget.
-  // llama-3.3-70b-versatile was deprecated by Groq (announced June 2026);
-  // qwen/qwen3.6-27b is Groq's own recommended replacement for it.
-  return askGroqForJson(prompt, "qwen/qwen3.6-27b");
+  // llama-3.3-70b-versatile was deprecated by Groq (announced June 2026),
+  // replaced with qwen/qwen3.6-27b — which Groq itself then deprecated
+  // (email received 2026-09-01, decommissioned 2026-09-14) in favor of
+  // qwen/qwen3.8-27b.
+  return askGroqForJson(prompt, "qwen/qwen3.8-27b");
 }
 
 const VAGUE_MARKERS = [
