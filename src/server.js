@@ -1098,6 +1098,37 @@ async function processMessageInner(gmail, m, waId) {
     }
   }
 
+  // Checked before eventType routing, and regardless of what eventType was
+  // also assigned — a scam can be written to look exactly like a normal
+  // confirmation/interview/offer. Fraud gets a distinct WhatsApp warning
+  // (never added to the dashboard as if it were a real update); a harmless
+  // prank/joke is just silently skipped, same as non_job.
+  if (details.suspicionType === "phishing_fraud") {
+    console.log(`[${ts()}] [poll] id=${m.id} flagged as possible phishing/fraud: ${details.suspicionReason}`);
+    const warning = `⚠️ ApplyAndFly
+
+An email claiming to be from "${details.company}" looked like it could be a phishing or scam attempt, not a genuine update — so it was NOT added to your dashboard.
+
+🚩 Why it was flagged
+${details.suspicionReason}
+
+Don't click any links or share personal/payment details from that email. If you're unsure, verify directly through the company's official careers page instead.`;
+    if (isWindowOpen(waId)) {
+      await sendConfirmation(warning, null, waId);
+    } else {
+      const hadPendingAlready = (pendingMessages.get(waId) || []).length > 0;
+      queuePendingMessage(waId, { body: warning, dashboardUrl: null });
+      if (!hadPendingAlready) {
+        await sendWhatsAppTemplate("job_application_update", "en", waId);
+      }
+    }
+    return;
+  }
+  if (details.suspicionType === "prank_joke") {
+    console.log(`[${ts()}] [poll] id=${m.id} skipped (flagged as prank/joke: ${details.suspicionReason})`);
+    return;
+  }
+
   // eventType alone routes the email — a new confirmation always sends the
   // WhatsApp message and gets added to the dashboard, exactly as before;
   // there's no confidence-based withholding. "uncertain"/"non_job"/
