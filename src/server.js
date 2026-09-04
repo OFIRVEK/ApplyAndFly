@@ -9,7 +9,7 @@ import { isJobEmail, hasStrongConfirmationPhrase, looksLikeRejection, looksLikeI
 import { sendWhatsApp, sendWhatsAppTemplate, sendWhatsAppCtaUrl } from "./whatsapp.js";
 import { classifyEmail, extractPositionFromSubject, formatConfirmationMessage } from "./enrich.js";
 import { researchCompanyFromEvidence } from "./companyEvidence.js";
-import { addApplication, findApplication, updateApplicationStatus, updateApplicationStatusByThread, updateApplicationStatusByRow, upsertApplicationStatus, updateApplicationDescription, updateApplicationResearch, fillMissingResearchFromSiblings, removeApplicationsByCompany, getAllApplications, getApplicationsForGeneration, tagUntaggedApplications } from "./store.js";
+import { addApplication, findApplication, updateApplicationStatus, updateApplicationStatusByThread, updateApplicationStatusByRow, upsertApplicationStatus, updateApplicationDescription, updateApplicationResearch, fillMissingResearchFromSiblings, removeApplicationsByCompany, removeApplicationByRow, getAllApplications, getApplicationsForGeneration, tagUntaggedApplications } from "./store.js";
 import { getCachedClassification, setCachedClassification } from "./classificationCache.js";
 import { getUser, upsertUser, getAllUsers, getUserByDashboardToken, getUserByEmail } from "./users.js";
 import { startOrRenewWatch, needsRenewal } from "./gmailWatch.js";
@@ -102,6 +102,21 @@ dashboardApp.patch("/api/applications/status", (req, res) => {
   const updated = updateApplicationStatusByRow({ waId: user.waId, company, position, appliedDate, sourceMessageId, status });
   if (!updated) return res.status(404).json({ error: "Application not found" });
   res.json({ updated: true });
+});
+
+dashboardApp.delete("/api/applications", (req, res) => {
+  const user = resolveDashboardUser(req);
+  if (!user) return res.status(401).json({ error: "Invalid dashboard token" });
+  if (!user.isCurrentDashboard) {
+    return res.status(403).json({ error: "This dashboard is no longer active and is read-only." });
+  }
+
+  const { company, position, appliedDate, sourceMessageId } = req.body || {};
+  if (!company) return res.status(400).json({ error: "A company is required" });
+
+  const removed = removeApplicationByRow({ waId: user.waId, company, position, appliedDate, sourceMessageId });
+  if (!removed) return res.status(404).json({ error: "Application not found" });
+  res.json({ removed: true });
 });
 
 // The dashboard also lives under the main app. Locally it remains available

@@ -279,6 +279,30 @@ export function fillMissingResearchFromSiblings(waId) {
   return filled;
 }
 
+// Removes exactly one tracked application row — mirrors
+// updateApplicationStatusByRow's matching logic (sourceMessageId when
+// available, else company+position+appliedDate) so a dashboard delete
+// action can never accidentally remove a sibling application at the same
+// company.
+export function removeApplicationByRow({ waId, company, position, appliedDate, sourceMessageId }) {
+  const apps = loadApplications();
+  const key = normalize(company);
+  const targetDate = appliedDate ? new Date(appliedDate).getTime() : NaN;
+  const index = apps.findIndex((entry) =>
+    sourceMessageId
+      ? entry.waId === waId && entry.sourceMessageId === sourceMessageId
+      : entry.waId === waId &&
+        normalize(entry.company) === key &&
+        normalize(entry.position) === normalize(position) &&
+        new Date(entry.appliedDate).getTime() === targetDate
+  );
+  if (index === -1) return false;
+
+  apps.splice(index, 1);
+  saveApplications(apps);
+  return true;
+}
+
 export function removeApplicationsByCompany(waId, company) {
   const apps = loadApplications();
   const key = normalize(company);

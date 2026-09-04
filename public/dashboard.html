@@ -232,6 +232,30 @@
   .status-select.status-rejected { background: color-mix(in srgb, var(--rejected) 18%, var(--card)); color: var(--rejected); border-color: color-mix(in srgb, var(--rejected) 45%, var(--border)); }
   .status-select.status-hired { background: color-mix(in srgb, var(--hired) 18%, var(--card)); color: var(--hired); border-color: color-mix(in srgb, var(--hired) 45%, var(--border)); }
 
+  .delete-button {
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text-secondary);
+    border-radius: 6px;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .delete-button:hover { color: var(--rejected); border-color: color-mix(in srgb, var(--rejected) 45%, var(--border)); }
+  .delete-button.confirming {
+    background: color-mix(in srgb, var(--rejected) 18%, var(--card));
+    color: var(--rejected);
+    border-color: color-mix(in srgb, var(--rejected) 45%, var(--border));
+    width: auto;
+    padding: 0 10px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .delete-button:disabled { opacity: 0.6; cursor: wait; }
+
   .empty {
     text-align: center;
     padding: 48px 16px;
@@ -367,6 +391,7 @@
           <th><div class="filter-header"><span>Applied</span><button class="filter-button" data-filter="appliedDate" aria-label="Filter applied date"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M1.5 3h13L9.5 8.7v3.8l-3 1.5V8.7L1.5 3z"/></svg></button></div></th>
           <th><div class="filter-header"><span>Status</span><button class="filter-button" data-filter="status" aria-label="Filter status"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M1.5 3h13L9.5 8.7v3.8l-3 1.5V8.7L1.5 3z"/></svg></button></div></th>
           <th><div class="filter-header"><span>What they do</span><button class="filter-button" data-filter="briefExplanation" aria-label="Filter company description"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M1.5 3h13L9.5 8.7v3.8l-3 1.5V8.7L1.5 3z"/></svg></button></div></th>
+          <th></th>
         </tr>
       </thead>
       <tbody id="table-body"></tbody>
@@ -596,7 +621,7 @@
       // undo the very filters that emptied the view.
       table.style.display = "table";
       emptyState.style.display = "none";
-      tbody.innerHTML = `<tr><td colspan="5" class="empty">No applications match the selected filters.
+      tbody.innerHTML = `<tr><td colspan="6" class="empty">No applications match the selected filters.
         <button type="button" id="clear-all-filters" style="border:0;background:transparent;color:var(--accent);cursor:pointer;font:inherit;text-decoration:underline;padding:0;">Clear all filters</button></td></tr>`;
       updateFilterButtons();
       return;
@@ -612,6 +637,7 @@
         <td>${formatDate(a.appliedDate)}</td>
         <td>${renderStatusSelect(a)}</td>
         <td class="explanation">${escapeHtml(a.briefExplanation || "")}</td>
+        <td>${renderDeleteButton(a)}</td>
       </tr>
     `).join("");
     updateFilterButtons();
@@ -636,6 +662,16 @@
     // rejects the PATCH with 403, this just makes that visible/expected in
     // the UI instead of a silent failed save.
     return `<select class="status-select ${statusClass}"${isCurrentDashboard ? "" : " disabled"} data-company="${encodeURIComponent(application.company || "")}" data-position="${encodeURIComponent(application.position || "")}" data-applied-date="${encodeURIComponent(application.appliedDate || "")}" data-source-message-id="${encodeURIComponent(application.sourceMessageId || "")}">${options}</select>`;
+  }
+
+  // Click once to arm ("Confirm?"), click again to actually delete — same
+  // no-native-dialogs approach as the rest of this page (see the
+  // unsubscribe modal comment above), just lighter-weight for a per-row
+  // action: a full modal per row would be a lot of chrome for "delete this
+  // one application".
+  function renderDeleteButton(application) {
+    if (!isCurrentDashboard) return "";
+    return `<button type="button" class="delete-button" aria-label="Delete this application" data-company="${encodeURIComponent(application.company || "")}" data-position="${encodeURIComponent(application.position || "")}" data-applied-date="${encodeURIComponent(application.appliedDate || "")}" data-source-message-id="${encodeURIComponent(application.sourceMessageId || "")}"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M6 2h4a1 1 0 0 1 1 1v1h3v1.5H2V4h3V3a1 1 0 0 1 1-1zm-2 4h8l-.6 8.1a1 1 0 0 1-1 .9H5.6a1 1 0 0 1-1-.9L4 6z"/></svg></button>`;
   }
 
   async function refreshResearchStatus() {
@@ -820,6 +856,57 @@
         appliedDate: decodeURIComponent(select.dataset.appliedDate),
         sourceMessageId: decodeURIComponent(select.dataset.sourceMessageId),
         status: select.value,
+      }),
+    });
+    if (!response.ok) {
+      await loadDashboard();
+      return;
+    }
+    await loadDashboard();
+  });
+
+  // Click-to-arm delete: the first click turns the row's trash icon into a
+  // "Confirm?" button instead of deleting right away; a second click within
+  // 4s actually deletes. Clicking anywhere else, or letting it time out,
+  // reverts it — so a stray click never removes a row.
+  let armedDeleteButton = null;
+  let armedDeleteTimeout = null;
+  function disarmDelete() {
+    if (armedDeleteButton) {
+      armedDeleteButton.classList.remove("confirming");
+      armedDeleteButton.textContent = "";
+      armedDeleteButton.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M6 2h4a1 1 0 0 1 1 1v1h3v1.5H2V4h3V3a1 1 0 0 1 1-1zm-2 4h8l-.6 8.1a1 1 0 0 1-1 .9H5.6a1 1 0 0 1-1-.9L4 6z"/></svg>`;
+    }
+    clearTimeout(armedDeleteTimeout);
+    armedDeleteButton = null;
+  }
+
+  document.getElementById("table-body").addEventListener("click", async event => {
+    const button = event.target.closest(".delete-button");
+    if (!button) {
+      disarmDelete();
+      return;
+    }
+
+    if (button !== armedDeleteButton) {
+      disarmDelete();
+      armedDeleteButton = button;
+      button.classList.add("confirming");
+      button.textContent = "Confirm?";
+      armedDeleteTimeout = setTimeout(disarmDelete, 4000);
+      return;
+    }
+
+    disarmDelete();
+    button.disabled = true;
+    const response = await fetch("/api/applications", {
+      method: "DELETE",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        company: decodeURIComponent(button.dataset.company),
+        position: decodeURIComponent(button.dataset.position),
+        appliedDate: decodeURIComponent(button.dataset.appliedDate),
+        sourceMessageId: decodeURIComponent(button.dataset.sourceMessageId),
       }),
     });
     if (!response.ok) {
