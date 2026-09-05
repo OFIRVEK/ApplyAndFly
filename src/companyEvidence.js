@@ -1,5 +1,5 @@
 import axios from "axios";
-import { askGroqForJson, extractSenderDomain, isAtsOrGenericDomain } from "./enrich.js";
+import { askGroqForJson, extractSenderDomain, isAtsOrGenericDomain, enrichCompanyOnce } from "./enrich.js";
 import { assertPublicHostname, MAX_PAGE_BYTES, isTextContentType } from "./netGuard.js";
 import { tavilySearch } from "./tavily.js";
 import { getCachedCompanyIdentity, setCachedCompanyIdentity } from "./companyIdentityCache.js";
@@ -286,6 +286,38 @@ async function verifyTopCandidates(candidates, company, attempted) {
   }
 }
 
+// A domain independently pointed to by BOTH the sender's own email address
+// and a separate link inside the email body — two distinct evidence types
+// sourced from the email itself, not from search — whose name also plainly
+// contains the company's name, is real corroborating evidence on its own.
+// This exists specifically for companies whose official site can never be
+// fetched to confirm identity because it blocks all automated requests
+// outright (large corporate sites commonly do — e.g. mckinsey.com returns a
+// hard 403 from Akamai's bot protection to any non-browser request, not
+// just this app's). No amount of retrying fixes that, so this substitutes
+// two independent, email-sourced signals agreeing with each other instead
+// of requiring the page fetch — deliberately narrow so it never substitutes
+// for real verification on a single, weaker signal.
+// Generic words in a company's legal name that its own domain very often
+// drops (McKinsey & Company -> mckinsey.com, Acme Technologies Inc ->
+// acme.com) — excluded so the match is judged on the DISTINCTIVE part of
+// the name, not the full string, which would otherwise never match.
+const GENERIC_COMPANY_WORDS = new Set([
+  "company", "co", "inc", "incorporated", "ltd", "limited", "llc", "group",
+  "corp", "corporation", "the", "and", "technologies", "technology",
+  "solutions", "holdings", "international", "global",
+]);
+
+function hasEmailSelfCorroboration(candidate, company) {
+  if (!candidate) return false;
+  const types = new Set(candidate.evidence.map((e) => e.type));
+  if (!types.has("corporate-email-sender") || !types.has("application-email-link")) return false;
+  const domainSlug = candidate.domain.replace(/\./g, "");
+  const words = (company.toLowerCase().match(/[a-z0-9]+/g) || [])
+    .filter((word) => word.length >= 4 && !GENERIC_COMPANY_WORDS.has(word));
+  return words.some((word) => domainSlug.includes(word));
+}
+
 function pickVerifiedWinner(candidates) {
   const winner = [...candidates.values()].sort((a, b) => b.score - a.score)[0];
   const evidenceTypes = new Set(winner?.evidence.map((evidence) => evidence.type) || []);
@@ -333,6 +365,21 @@ async function resolveCompany({ company, position, fromHeader, body, html }) {
       }
       console.log(`[company-resolve] cached domain for "${company}" no longer matches, re-resolving via Tavily`);
     } catch {
+      // The cached domain is still independently corroborated by THIS
+      // email (not just trusted by name) — reuse it without a fresh fetch,
+      // rather than treating a permanently bot-blocked site (e.g.
+      // mckinsey.com) as a failed lookup and burning a full search round
+      // every single time a new email from the same company arrives.
+      if (hasEmailSelfCorroboration(candidates.get(rootDomain(cached.domain)), company)) {
+        return {
+          verified: true,
+          domain: cached.domain,
+          score: cached.score,
+          homepage: null,
+          sourceUrls: cached.sourceUrls || [],
+          linkedinUrl: cached.linkedinUrl || null,
+        };
+      }
       console.log(`[company-resolve] cached domain for "${company}" unreachable, re-resolving via Tavily`);
     }
   }
@@ -375,11 +422,23 @@ async function resolveCompany({ company, position, fromHeader, body, html }) {
     ({ winner, verified } = pickVerifiedWinner(candidates));
   }
 
+  // The official-site fetch above can never succeed against a domain that
+  // blocks all automated requests outright (see hasEmailSelfCorroboration).
+  // Only reached when nothing above already verified a winner.
+  if (!verified) {
+    const corroborated = [...candidates.values()].find((c) => hasEmailSelfCorroboration(c, company));
+    if (corroborated) {
+      winner = corroborated;
+      verified = true;
+      console.log(`[company-resolve] "${company}" verified via email self-corroboration (site fetch blocked/unavailable): ${corroborated.domain}`);
+    }
+  }
+
   const result = {
     verified,
     domain: verified ? winner.domain : null,
     score: winner ? Math.min(100, winner.score) : 0,
-    homepage: verified ? winner.verifiedSite : null,
+    homepage: verified ? winner.verifiedSite || null : null,
     sourceUrls: verified ? [...winner.sourceUrls] : [],
     linkedinUrl: allLinkedinResults[0]?.url || null,
   };
@@ -484,6 +543,21 @@ Ignore navigation menus, cookie text, recruitment pitches, promotions, isolated 
 export async function researchCompanyFromEvidence({ company, position, fromHeader, body = "", html = "" }) {
   const identity = await resolveCompany({ company, position, fromHeader, body, html });
   if (!identity.verified) return unverifiedSnapshot(company);
+
+  // Verified but the official site itself couldn't be fetched (identity
+  // came from hasEmailSelfCorroboration instead, e.g. a site with hard
+  // bot-blocking) — there's no crawled evidence to summarize FROM, so this
+  // is the one path allowed to fall back on the model's own general
+  // knowledge, exactly like enrichCompany's older behavior. Only reached
+  // once the domain is genuinely verified, never for a guessed one.
+  if (!identity.homepage) {
+    const snapshot = await enrichCompanyOnce({ company, position });
+    return {
+      ...snapshot,
+      sources: identity.linkedinUrl ? [identity.linkedinUrl] : [],
+      confidence: identity.score,
+    };
+  }
 
   const officialEvidence = await collectOfficialEvidence(identity.homepage, identity.domain);
   return summarizeVerifiedCompany({

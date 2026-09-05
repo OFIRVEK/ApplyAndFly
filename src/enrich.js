@@ -256,7 +256,7 @@ export function formatReceivedDate(dateHeader) {
   });
 }
 
-async function enrichCompanyOnce({ company, position, websiteBlurb }) {
+export async function enrichCompanyOnce({ company, position, websiteBlurb }) {
   const websiteBlock = websiteBlurb
     ? `\nRaw text pulled from the company's official website (may include navigation/menu clutter mixed with real content — use judgment to find the genuine descriptive parts): ${websiteBlurb}\n\nPrefer this live content when it's genuinely descriptive — it's more current and reliable than memory, especially for smaller or less widely known companies.\n`
     : "";
