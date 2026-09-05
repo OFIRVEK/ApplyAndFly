@@ -429,6 +429,15 @@ async function resolveCompany({ company, position, fromHeader, body, html }) {
     const corroborated = [...candidates.values()].find((c) => hasEmailSelfCorroboration(c, company));
     if (corroborated) {
       winner = corroborated;
+      // Two independent, email-sourced signals agreeing (sender address +
+      // a separate body link) plus a real name-to-domain match is already
+      // as strong a signal as this app treats as "confidently verified"
+      // elsewhere — floored at 80 (not left to whatever the raw
+      // sender+link scores happen to add up to, e.g. 73) so downstream
+      // consumers that gate on confidence >= 75 (isVerifiedResearch /
+      // isApplicationAlreadyVerified in server.js) actually accept this
+      // result instead of silently treating it as still-unverified.
+      winner.score = Math.max(winner.score, 80);
       verified = true;
       console.log(`[company-resolve] "${company}" verified via email self-corroboration (site fetch blocked/unavailable): ${corroborated.domain}`);
     }
@@ -554,7 +563,14 @@ export async function researchCompanyFromEvidence({ company, position, fromHeade
     const snapshot = await enrichCompanyOnce({ company, position });
     return {
       ...snapshot,
-      sources: identity.linkedinUrl ? [identity.linkedinUrl] : [],
+      // The verified domain itself counts as a (non-LinkedIn) source even
+      // though its content couldn't be crawled — server.js's
+      // isVerifiedResearch/isApplicationAlreadyVerified specifically
+      // require at least one non-LinkedIn source before accepting a
+      // refresh's result, and this is the real evidence that verified the
+      // identity (the email's own sender/body corroboration), just not
+      // something with crawlable text.
+      sources: [`https://${identity.domain}`, ...(identity.linkedinUrl ? [identity.linkedinUrl] : [])],
       confidence: identity.score,
     };
   }
